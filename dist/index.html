@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCULUS.AI // 3D Eye-Tracking &amp; Visual Field Analysis</title>
+  <meta name="description" content="Sistema avançado de rastreamento ocular com Deep Learning, campo de visão 3D, mapas de calor e polígonos biométricos.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Three.js & OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+</head>
+<body class="cyber-bg-grid">
+
+<div id="app-shell">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       TOP BAR
+  ══════════════════════════════════════════════════════════════ -->
+  <header id="top-bar">
+
+    <!-- Logo -->
+    <div class="logo-group">
+      <div class="logo-icon">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" stroke-width="2"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+        </svg>
+      </div>
+      <div class="logo-title">OCULUS<span>.AI</span></div>
+      <span class="logo-badge">DEEP LEARNING</span>
+      <span class="logo-badge" style="border-color:rgba(168,85,247,.25);color:#a855f7;background:rgba(168,85,247,.08)">3D FOV</span>
+    </div>
+
+    <!-- Status -->
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="badge-status">Carregando motores de IA...</span>
+    </div>
+
+    <!-- Metric badges -->
+    <div class="metric-badges">
+      <div class="metric-badge mb-cyan">
+        <span class="mb-label">FPS</span>
+        <span id="badge-fps" class="mb-value">60</span>
+      </div>
+      <div class="metric-badge mb-green">
+        <span class="mb-label">LAT</span>
+        <span id="badge-latency" class="mb-value">4ms</span>
+      </div>
+      <div class="metric-badge" style="color:#a855f7">
+        <span class="mb-label" style="color:#64748b">PREC</span>
+        <span id="badge-accuracy" class="mb-value" style="color:#a855f7">98%</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="action-buttons">
+      <button id="btn-start-camera" class="btn-pill btn-camera">
+        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" stroke-width="2" stroke-linejoin="round"/></svg>
+        Câmera
+      </button>
+      <button id="btn-toggle-simulation" class="btn-pill btn-simulate active">
+        <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Simular
+      </button>
+      <button id="btn-calibrate" class="btn-pill btn-calibrate">
+        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke-width="2"/><path stroke-width="2" d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        Calibrar
+      </button>
+      <div style="width:1px;height:22px;background:rgba(255,255,255,0.08)"></div>
+      <button id="btn-export-csv"  class="btn-sm">CSV</button>
+      <button id="btn-export-json" class="btn-sm">JSON</button>
+      <button id="btn-save-heatmap" class="btn-sm" style="color:#00f5ff">Heatmap</button>
+    </div>
+
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CONTENT AREA
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="content-area">
+
+    <!-- ─── LEFT: Camera Feed ───────────────────────────────── -->
+    <div id="camera-column">
+      <div class="camera-panel">
+
+        <!-- Video wrapper -->
+        <div class="camera-video-wrapper">
+          <!-- Corner deco -->
+          <div class="corner-tl"></div>
+          <div class="corner-tr"></div>
+          <div class="corner-bl"></div>
+          <div class="corner-br"></div>
+
+          <!-- LIVE badge -->
+          <div class="live-badge">
+            <span class="live-dot"></span>
+            LIVE &bull; 60FPS
+          </div>
+
+          <!-- Video -->
+          <video id="webcam-video" autoplay playsinline muted></video>
+
+          <!-- Canvas overlay -->
+          <canvas id="video-overlay"></canvas>
+
+          <!-- Scanline -->
+          <div class="scanline-overlay"></div>
+
+          <!-- Stats overlay bar -->
+          <div class="camera-stats">
+            <div class="cs-item">
+              <span class="cs-label">EAR</span>
+              <span id="cs-ear" class="cs-value">0.28</span>
+            </div>
+            <div class="cs-sep"></div>
+            <div class="cs-item">
+              <span class="cs-label">PISCADAS</span>
+              <span id="cs-blinks" class="cs-value">0</span>
+            </div>
+            <div class="cs-sep"></div>
+            <div class="cs-item">
+              <span id="cs-face-status" class="cs-value" style="color:#ff2d78">NO FACE</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ─── RIGHT: 3D + Tabs ─────────────────────────────────── -->
+    <div id="right-column">
+
+      <!-- 3D FOV Panel -->
+      <div id="three-panel" class="glass-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="panel-dot" style="background:#00f5ff"></span>
+            CAMPO DE VISÃO 3D
+            <span class="panel-badge badge-cyan">THREE.JS</span>
+          </div>
+          <div class="three-controls">
+            <label><input type="checkbox" id="toggle-fov-cones" checked> Cones FOV</label>
+            <label><input type="checkbox" id="toggle-face-mesh" checked> Nuvem 3D</label>
+            <button id="btn-reset-3d" class="btn-sm">Reset</button>
+          </div>
+        </div>
+
+        <div id="three-container"></div>
+
+        <div class="three-legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#00ff88"></div> Foveal 2°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#00d2ff"></div> Parafoveal 10°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#9333ea"></div> Periférico 160°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#ff2d78"></div> Impacto Tela</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#00f5ff;border-radius:50%"></div> Anel Orbital</div>
+        </div>
+      </div>
+
+      <!-- Tabs Panel -->
+      <div id="tabs-panel" class="glass-panel">
+
+        <!-- Tab nav -->
+        <nav class="tab-nav">
+          <button class="tab-btn active" data-tab="heatmap">🔥 Heatmap</button>
+          <button class="tab-btn" data-tab="aoi">📐 Polígonos AOI</button>
+          <button class="tab-btn" data-tab="telemetry">📊 Telemetria</button>
+        </nav>
+
+        <!-- Heatmap Tab -->
+        <div id="tab-heatmap" class="tab-content active" style="flex-direction:column">
+          <div class="heatmap-controls">
+            <label>Paleta:
+              <select id="heatmap-palette">
+                <option value="turbo">Turbo</option>
+                <option value="inferno">Inferno</option>
+                <option value="viridis">Viridis</option>
+                <option value="jet">Jet</option>
+                <option value="neon">Neon</option>
+              </select>
+            </label>
+            <label>Raio: <input type="range" id="heatmap-radius" min="15" max="90" value="44" style="width:60px"></label>
+            <label>Opacidade: <input type="range" id="heatmap-opacity" min="0.1" max="1.0" step="0.05" value="0.75" style="width:60px"></label>
+            <label><input type="checkbox" id="heatmap-decay" checked> Decaimento</label>
+            <label><input type="checkbox" id="heatmap-scanpath" checked> Scanpath</label>
+            <label class="btn-sm" style="cursor:pointer">Imagem<input type="file" id="bg-image-upload" accept="image/*" style="display:none"></label>
+            <button id="btn-reset-heatmap" class="btn-sm" style="color:#ff2d78;border-color:rgba(255,45,120,.3)">Limpar</button>
+          </div>
+          <div style="flex:1;position:relative;overflow:hidden">
+            <canvas id="heatmap-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- AOI Tab -->
+        <div id="tab-aoi" class="tab-content" style="flex-direction:column">
+          <div style="flex:1;position:relative;overflow:hidden;background:#040c18">
+            <canvas id="aoi-canvas"></canvas>
+          </div>
+          <div class="aoi-table-wrap" style="max-height:120px;flex:none">
+            <table class="aoi-table">
+              <thead>
+                <tr>
+                  <th>Polígono</th>
+                  <th>Dwell</th>
+                  <th>Atenção%</th>
+                  <th>Fixações</th>
+                  <th>TTFF</th>
+                </tr>
+              </thead>
+              <tbody id="aoi-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Telemetry Tab -->
+        <div id="tab-telemetry" class="tab-content">
+          <div style="padding:8px;flex:1;overflow:hidden">
+            <canvas id="oscilloscope-canvas" style="width:100%;height:100%;display:block"></canvas>
+          </div>
+        </div>
+
+      </div><!-- /tabs-panel -->
+
+    </div><!-- /right-column -->
+
+  </div><!-- /content-area -->
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BOTTOM METRICS BAR
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="bottom-bar">
+    <div class="bottom-metric">
+      <div class="bm-label">Olho Esq 3D (mm)</div>
+      <div id="hud-left-mm" class="bm-value bm-cyan">X:0.0 Y:0.0 Z:0.0</div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Olho Dir 3D (mm)</div>
+      <div id="hud-right-mm" class="bm-value bm-cyan">X:0.0 Y:0.0 Z:0.0</div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Gaze Tela</div>
+      <div id="hud-gaze-px" class="bm-value bm-pink">X:0px Y:0px (0.50, 0.50)</div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Pose Cabeça</div>
+      <div id="hud-head-pose" class="bm-value bm-purple">P:0° Y:0° R:0°</div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">IPD &amp; Ângulo Visual</div>
+      <div class="bm-value bm-green"><span id="hud-ipd">63.2mm</span> / <span id="hud-visual-angle">0.0°</span></div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Piscadas &amp; EAR</div>
+      <div id="hud-blinks" class="bm-value bm-amber">0 (0BPM) EAR:0.28</div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- ─── CALIBRATION MODAL ───────────────────────────────────── -->
+<div id="calibration-modal">
+  <div id="calibration-target"></div>
+  <div class="cal-info">
+    <h3>Calibração Biométrico-Polinomial</h3>
+    <p id="calibration-progress">Mantenha o olhar fixo no alvo pulsante...</p>
+    <button id="btn-cancel-calibration">Cancelar Calibração</button>
+  </div>
+</div>
+
+<!-- ─── APP SCRIPT ──────────────────────────────────────────── -->
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -2,9 +2,10 @@
   "name": "oculus-eye-tracking-3d",
   "version": "1.0.0",
   "description": "Sistema avançado de rastreamento ocular com Deep Learning, campo de visão 3D (FOV), mapas de calor de atenção visual e polígonos biométricos para Vercel.",
-  "main": "index.html",
+  "main": "dist/index.html",
   "scripts": {
-    "start": "npx serve ."
+    "start": "npx serve dist",
+    "build": "mkdir -p dist && cp -r index.html css js dist/ && echo 'Build complete: dist populated'"
   },
   "keywords": [
     "eye-tracking",

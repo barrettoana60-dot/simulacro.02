@@ -3,511 +3,285 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OCULUS-AI // 3D Eye-Tracking & Visual Field Analysis</title>
-  <meta name="description" content="Sistema avançado de rastreamento ocular e gaze estimation com Deep Learning, campo de visão 3D, mapas de calor e polígonos biométricos.">
+  <title>OCULUS.AI // 3D Eye-Tracking &amp; Visual Field Analysis</title>
+  <meta name="description" content="Sistema avançado de rastreamento ocular com Deep Learning, campo de visão 3D, mapas de calor e polígonos biométricos.">
 
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            cyber: {
-              900: '#060913',
-              800: '#0c1222',
-              700: '#141d33',
-              cyan: '#00f0ff',
-              magenta: '#ff0077',
-              emerald: '#00ff88',
-              purple: '#9d4edd'
-            }
-          }
-        }
-      }
-    };
-  </script>
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
-  <!-- Google Fonts & Custom Styles -->
+  <!-- Styles -->
   <link rel="stylesheet" href="css/style.css">
 
-  <!-- Three.js e OrbitControls para Campo de Visão 3D -->
+  <!-- Three.js & OrbitControls -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-  <!-- MediaPipe Face Mesh & Camera Utils CDN para Deep Learning -->
+  <!-- MediaPipe -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
-<body class="bg-[#060913] text-slate-100 min-h-screen cyber-bg-grid flex flex-col selection:bg-cyan-500 selection:text-black">
+<body class="cyber-bg-grid">
 
-  <!-- HEADER SUPERIOR / HUD BAR -->
-  <header class="glass-panel border-b border-cyan-500/20 px-6 py-3.5 sticky top-0 z-40">
-    <div class="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-4">
-      
-      <!-- Marca & Descrição -->
-      <div class="flex items-center gap-3">
-        <div class="relative flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/40 text-cyan-400">
-          <svg class="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3" stroke-width="2"/>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-          </svg>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-lg font-bold tracking-wider text-white">OCULUS<span class="text-cyan-400">.AI</span></h1>
-            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300">DEEP LEARNING</span>
-            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-950/80 border border-purple-500/30 text-purple-300">3D FOV</span>
-          </div>
-          <p class="text-xs text-slate-400">Rastreamento Ocular Sub-Milimétrico • Campo de Visão 3D • Mapas de Calor • Polígonos Biométricos</p>
-        </div>
+<div id="app-shell">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       TOP BAR
+  ══════════════════════════════════════════════════════════════ -->
+  <header id="top-bar">
+
+    <!-- Logo -->
+    <div class="logo-group">
+      <div class="logo-icon">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" stroke-width="2"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+        </svg>
       </div>
-
-      <!-- Badges de Telemetria em Tempo Real -->
-      <div class="flex items-center gap-2 text-xs font-mono">
-        <div class="px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-          <span id="badge-status" class="text-slate-300">Carregando motores de IA...</span>
-        </div>
-        <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60">
-          <span class="text-slate-400">FPS:</span>
-          <span id="badge-fps" class="text-cyan-400 font-bold ml-1">60 FPS</span>
-        </div>
-        <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60">
-          <span class="text-slate-400">LAT:</span>
-          <span id="badge-latency" class="text-emerald-400 font-bold ml-1">4 ms</span>
-        </div>
-        <div class="px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700/60">
-          <span class="text-slate-400">PRECISÃO:</span>
-          <span id="badge-accuracy" class="text-purple-400 font-bold ml-1">98.2%</span>
-        </div>
-      </div>
-
-      <!-- Barra de Ações Rápidas -->
-      <div class="flex items-center gap-2">
-        <button id="btn-start-camera" class="btn-neon-cyan px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5">
-          <span>▶ Iniciar Câmera</span>
-        </button>
-
-        <button id="btn-toggle-simulation" class="px-3.5 py-1.5 rounded-lg text-xs font-medium border border-cyan-500/40 bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition-all flex items-center gap-1.5">
-          <span>⚡ Simulação Ativa</span>
-        </button>
-
-        <button id="btn-calibrate" class="btn-neon-magenta px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5">
-          <span>🎯 Calibrar (9 Pontos)</span>
-        </button>
-
-        <div class="h-5 w-[1px] bg-slate-700 mx-1"></div>
-
-        <button id="btn-export-csv" class="px-3 py-1.5 rounded-lg text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all">
-          CSV
-        </button>
-        <button id="btn-export-json" class="px-3 py-1.5 rounded-lg text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-all">
-          JSON
-        </button>
-        <button id="btn-save-heatmap" class="px-3 py-1.5 rounded-lg text-xs bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-cyan-300 transition-all">
-          Salvar Heatmap
-        </button>
-      </div>
-
+      <div class="logo-title">OCULUS<span>.AI</span></div>
+      <span class="logo-badge">DEEP LEARNING</span>
+      <span class="logo-badge" style="border-color:rgba(168,85,247,.25);color:#a855f7;background:rgba(168,85,247,.08)">3D FOV</span>
     </div>
+
+    <!-- Status -->
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="badge-status">Carregando motores de IA...</span>
+    </div>
+
+    <!-- Metric badges -->
+    <div class="metric-badges">
+      <div class="metric-badge mb-cyan">
+        <span class="mb-label">FPS</span>
+        <span id="badge-fps" class="mb-value">60</span>
+      </div>
+      <div class="metric-badge mb-green">
+        <span class="mb-label">LAT</span>
+        <span id="badge-latency" class="mb-value">4ms</span>
+      </div>
+      <div class="metric-badge" style="color:#a855f7">
+        <span class="mb-label" style="color:#64748b">PREC</span>
+        <span id="badge-accuracy" class="mb-value" style="color:#a855f7">98%</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="action-buttons">
+      <button id="btn-start-camera" class="btn-pill btn-camera">
+        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" stroke-width="2" stroke-linejoin="round"/></svg>
+        Câmera
+      </button>
+      <button id="btn-toggle-simulation" class="btn-pill btn-simulate active">
+        <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Simular
+      </button>
+      <button id="btn-calibrate" class="btn-pill btn-calibrate">
+        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke-width="2"/><path stroke-width="2" d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        Calibrar
+      </button>
+      <div style="width:1px;height:22px;background:rgba(255,255,255,0.08)"></div>
+      <button id="btn-export-csv"  class="btn-sm">CSV</button>
+      <button id="btn-export-json" class="btn-sm">JSON</button>
+      <button id="btn-save-heatmap" class="btn-sm" style="color:#00f5ff">Heatmap</button>
+    </div>
+
   </header>
 
-  <!-- NAVEGAÇÃO POR ABAS -->
-  <nav class="border-b border-slate-800 bg-[#090e1c] px-6">
-    <div class="max-w-[1720px] mx-auto flex items-center gap-6 text-sm font-medium">
-      <button data-tab="overview" class="tab-btn py-3 border-b-2 border-cyan-400 text-cyan-400 flex items-center gap-2 transition-all">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-        Visão Geral // 3D FOV & Biometria
-      </button>
+  <!-- ═══════════════════════════════════════════════════════════
+       CONTENT AREA
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="content-area">
 
-      <button data-tab="heatmap" class="tab-btn py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-all">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/></svg>
-        Mapa de Calor // Atenção & Scanpath
-      </button>
+    <!-- ─── LEFT: Camera Feed ───────────────────────────────── -->
+    <div id="camera-column">
+      <div class="camera-panel">
 
-      <button data-tab="polygons" class="tab-btn py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-all">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-        Polígonos // Contornos & Áreas de Interesse (AOI)
-      </button>
+        <!-- Video wrapper -->
+        <div class="camera-video-wrapper">
+          <!-- Corner deco -->
+          <div class="corner-tl"></div>
+          <div class="corner-tr"></div>
+          <div class="corner-bl"></div>
+          <div class="corner-br"></div>
 
-      <button data-tab="telemetry" class="tab-btn py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center gap-2 transition-all">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-        Telemetria // Osciloscópio & Coordenadas 3D
-      </button>
-    </div>
-  </nav>
-
-  <!-- CONTEÚDO PRINCIPAL -->
-  <main class="flex-1 p-6 max-w-[1720px] mx-auto w-full">
-
-    <!-- ABA 1: VISÃO GERAL (3D FOV + VÍDEO COM POLÍGONOS + TELEMETRIA RÁPIDA) -->
-    <div id="tab-overview" class="tab-content grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-      <!-- Coluna da Esquerda (7 colunas): Campo de Visão 3D Three.js -->
-      <div class="lg:col-span-7 flex flex-col gap-4">
-        <div class="glass-panel rounded-2xl overflow-hidden flex flex-col flex-1 min-h-[500px]">
-          
-          <!-- Header do Painel 3D -->
-          <div class="px-5 py-3.5 border-b border-cyan-500/20 bg-slate-900/60 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
-              <h2 class="text-sm font-semibold text-white tracking-wide">CAMPO DE VISÃO 3D // FOV & GLOBO OCULAR</h2>
-              <span class="text-[10px] font-mono text-cyan-400 bg-cyan-950 px-2 py-0.5 rounded">THREE.JS ENGINE</span>
-            </div>
-
-            <!-- Controles do 3D -->
-            <div class="flex items-center gap-4 text-xs">
-              <label class="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                <input type="checkbox" id="toggle-fov-cones" checked class="rounded border-slate-700 text-cyan-500 focus:ring-0">
-                <span>Cones FOV</span>
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                <input type="checkbox" id="toggle-face-mesh" checked class="rounded border-slate-700 text-cyan-500 focus:ring-0">
-                <span>Nuvem 3D</span>
-              </label>
-              <button id="btn-reset-3d" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300">
-                Reset Visão
-              </button>
-            </div>
+          <!-- LIVE badge -->
+          <div class="live-badge">
+            <span class="live-dot"></span>
+            LIVE &bull; 60FPS
           </div>
 
-          <!-- Viewport 3D -->
-          <div id="three-container" class="relative flex-1 w-full h-full min-h-[460px] cursor-grab active:cursor-grabbing">
-            <div class="absolute bottom-3 left-4 text-[11px] font-mono text-slate-400 pointer-events-none bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800">
-              <span class="text-emerald-400">■</span> Foveal (2°) &nbsp;
-              <span class="text-cyan-400">■</span> Parafoveal (10°) &nbsp;
-              <span class="text-purple-400">■</span> Periférico (160°x135°) &nbsp;
-              <span class="text-pink-400">■</span> Impacto Tela
+          <!-- Video -->
+          <video id="webcam-video" autoplay playsinline muted></video>
+
+          <!-- Canvas overlay -->
+          <canvas id="video-overlay"></canvas>
+
+          <!-- Scanline -->
+          <div class="scanline-overlay"></div>
+
+          <!-- Stats overlay bar -->
+          <div class="camera-stats">
+            <div class="cs-item">
+              <span class="cs-label">EAR</span>
+              <span id="cs-ear" class="cs-value">0.28</span>
             </div>
-          </div>
-        </div>
-
-        <!-- Legenda Fisiológica 3D -->
-        <div class="grid grid-cols-3 gap-3 text-xs">
-          <div class="glass-panel p-3 rounded-xl border border-emerald-500/20 bg-emerald-950/10">
-            <div class="text-emerald-400 font-semibold mb-1">Visão Foveal (Central ~2°)</div>
-            <p class="text-slate-400 text-[11px] leading-relaxed">Concentração máxima de cones. Foco nítido, leitura de palavras e identificação de alta acuidade visual.</p>
-          </div>
-          <div class="glass-panel p-3 rounded-xl border border-cyan-500/20 bg-cyan-950/10">
-            <div class="text-cyan-400 font-semibold mb-1">Visão Parafoveal (~10°)</div>
-            <p class="text-slate-400 text-[11px] leading-relaxed">Zona intermediária de pré-processamento de caracteres e planejamento de movimentos sacádicos.</p>
-          </div>
-          <div class="glass-panel p-3 rounded-xl border border-purple-500/20 bg-purple-950/10">
-            <div class="text-purple-400 font-semibold mb-1">Campo Periférico (160° x 135°)</div>
-            <p class="text-slate-400 text-[11px] leading-relaxed">Detecção de movimento lateral, orientação espacial e sensibilidade a variações de iluminação.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Coluna da Direita (5 colunas): Vídeo com Polígonos Anatômicos + HUD -->
-      <div class="lg:col-span-5 flex flex-col gap-4">
-        
-        <!-- Câmera & Polígonos dos Olhos -->
-        <div class="glass-panel rounded-2xl overflow-hidden flex flex-col">
-          <div class="px-5 py-3 border-b border-cyan-500/20 bg-slate-900/60 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
-              <h2 class="text-sm font-semibold text-white tracking-wide">RASTREAMENTO FACIAL & POLÍGONOS DOS OLHOS</h2>
+            <div class="cs-sep"></div>
+            <div class="cs-item">
+              <span class="cs-label">PISCADAS</span>
+              <span id="cs-blinks" class="cs-value">0</span>
             </div>
-            <span class="text-[10px] font-mono text-pink-400 bg-pink-950 px-2 py-0.5 rounded">478 MARCOS 3D</span>
-          </div>
-
-          <div class="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden">
-            <!-- Vídeo Webcam (oculto visualmente mas ativo) -->
-            <video id="webcam-video" autoplay playsinline muted class="w-full h-full object-cover transform scale-x-[-1] opacity-75"></video>
-            
-            <!-- Canvas de Polígonos Anatômicos Sobreposto -->
-            <canvas id="video-overlay" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
-
-            <!-- Linha de Varredura Biométrica -->
-            <div class="scanline-overlay"></div>
-
-            <div class="absolute top-3 left-3 text-[10px] font-mono text-cyan-400 bg-black/75 px-2 py-1 rounded border border-cyan-500/30">
-              POLÍGONOS: CONTORNO OCULAR + ÍRIS + ESCLERA
+            <div class="cs-sep"></div>
+            <div class="cs-item">
+              <span id="cs-face-status" class="cs-value" style="color:#ff2d78">NO FACE</span>
             </div>
-          </div>
-        </div>
-
-        <!-- Cartões de Telemetria de Coordenadas de Alta Precisão -->
-        <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3">
-          <h3 class="text-xs font-semibold text-cyan-300 tracking-wider uppercase flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            Telemetria Ocular em Tempo Real
-          </h3>
-
-          <div class="grid grid-cols-2 gap-2.5 text-xs font-mono">
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">OLHO ESQUERDO 3D (mm)</span>
-              <span id="hud-left-mm" class="text-cyan-400 font-bold text-xs">X: 0.0 | Y: 0.0 | Z: 0.0</span>
-            </div>
-
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">OLHO DIREITO 3D (mm)</span>
-              <span id="hud-right-mm" class="text-cyan-400 font-bold text-xs">X: 0.0 | Y: 0.0 | Z: 0.0</span>
-            </div>
-
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">PONTO DE OLHAR NA TELA</span>
-              <span id="hud-gaze-px" class="text-pink-400 font-bold text-xs">X: 0px | Y: 0px (0.5, 0.5)</span>
-            </div>
-
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">ÂNGULO VISUAL & IPD</span>
-              <span class="text-emerald-400 font-bold text-xs"><span id="hud-visual-angle">0.0°</span> | <span id="hud-ipd">63.2 mm</span></span>
-            </div>
-
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">POSE DA CABEÇA (PITCH/YAW/ROLL)</span>
-              <span id="hud-head-pose" class="text-purple-400 font-bold text-xs">Pitch: 0° | Yaw: 0° | Roll: 0°</span>
-            </div>
-
-            <div class="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-              <span class="text-slate-400 text-[10px] block">PISCADAS & EAR (PÁLPEBRA)</span>
-              <span id="hud-blinks" class="text-yellow-400 font-bold text-xs">0 (0 BPM) | EAR: 0.28</span>
-            </div>
-          </div>
-
-          <div class="bg-slate-900/90 p-2.5 rounded-xl border border-cyan-500/30 flex items-center justify-between text-xs font-mono">
-            <span class="text-slate-400">Erro de Rastreamento (RMSE):</span>
-            <span id="hud-rmse" class="text-cyan-400 font-bold">8.2 px (Conf: 98.2%)</span>
           </div>
         </div>
 
       </div>
     </div>
 
-    <!-- ABA 2: MAPA DE CALOR & SCANPATH -->
-    <div id="tab-heatmap" class="tab-content hidden flex flex-col gap-4">
-      <div class="glass-panel rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-        
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-lg bg-pink-500/10 border border-pink-500/30 flex items-center justify-center text-pink-400">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/></svg>
+    <!-- ─── RIGHT: 3D + Tabs ─────────────────────────────────── -->
+    <div id="right-column">
+
+      <!-- 3D FOV Panel -->
+      <div id="three-panel" class="glass-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="panel-dot" style="background:#00f5ff"></span>
+            CAMPO DE VISÃO 3D
+            <span class="panel-badge badge-cyan">THREE.JS</span>
           </div>
-          <div>
-            <h2 class="text-sm font-semibold text-white">MAPA DE CALOR DE ATENÇÃO VISUAL & SCANPATH SACÁDICO</h2>
-            <p class="text-xs text-slate-400">Densidade cromática por kernel gaussiano e vetorização I-VT de fixações</p>
+          <div class="three-controls">
+            <label><input type="checkbox" id="toggle-fov-cones" checked> Cones FOV</label>
+            <label><input type="checkbox" id="toggle-face-mesh" checked> Nuvem 3D</label>
+            <button id="btn-reset-3d" class="btn-sm">Reset</button>
           </div>
         </div>
 
-        <!-- Controles Interativos do Heatmap -->
-        <div class="flex flex-wrap items-center gap-4 text-xs">
-          
-          <!-- Paleta de Cores -->
-          <div class="flex items-center gap-2">
-            <label for="heatmap-palette" class="text-slate-400 font-medium">Paleta:</label>
-            <select id="heatmap-palette" class="bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-cyan-500">
-              <option value="turbo">Turbo (Arco-íris)</option>
-              <option value="inferno">Inferno (Térmico)</option>
-              <option value="viridis">Viridis (Científico)</option>
-              <option value="jet">Jet (Clássico)</option>
-              <option value="neon">Neon Cyberpunk</option>
-            </select>
-          </div>
+        <div id="three-container"></div>
 
-          <!-- Raio do Kernel -->
-          <div class="flex items-center gap-2">
-            <label for="heatmap-radius" class="text-slate-400">Raio:</label>
-            <input type="range" id="heatmap-radius" min="15" max="90" value="44" class="w-20 accent-cyan-400">
-          </div>
-
-          <!-- Opacidade -->
-          <div class="flex items-center gap-2">
-            <label for="heatmap-opacity" class="text-slate-400">Opacidade:</label>
-            <input type="range" id="heatmap-opacity" min="0.1" max="1.0" step="0.05" value="0.75" class="w-20 accent-cyan-400">
-          </div>
-
-          <!-- Decaimento Temporal -->
-          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300">
-            <input type="checkbox" id="heatmap-decay" checked class="rounded border-slate-700 text-cyan-500 focus:ring-0">
-            <span>Decaimento Temporal</span>
-          </label>
-
-          <!-- Scanpath -->
-          <label class="flex items-center gap-1.5 cursor-pointer text-slate-300">
-            <input type="checkbox" id="heatmap-scanpath" checked class="rounded border-slate-700 text-cyan-500 focus:ring-0">
-            <span>Scanpath (Linhas)</span>
-          </label>
-
-          <!-- Upload de Imagem de Estímulo -->
-          <label class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 cursor-pointer transition-all">
-            <span>Carregar Imagem</span>
-            <input type="file" id="bg-image-upload" accept="image/*" class="hidden">
-          </label>
-
-          <!-- Limpar -->
-          <button id="btn-reset-heatmap" class="px-3 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 border border-red-700 text-red-300 transition-all">
-            Limpar
-          </button>
-        </div>
-
-      </div>
-
-      <!-- Canvas do Mapa de Calor -->
-      <div class="glass-panel rounded-2xl overflow-hidden relative w-full h-[640px] flex items-center justify-center">
-        <canvas id="heatmap-canvas" class="w-full h-full"></canvas>
-
-        <div class="absolute top-4 left-4 pointer-events-none bg-slate-950/80 px-3 py-2 rounded-xl border border-slate-800 text-xs font-mono">
-          <div class="text-cyan-400 font-bold mb-0.5">DETECTOR DE FIXAÇÃO // I-VT</div>
-          <div class="text-slate-400 text-[11px]">Círculos numerados representam sequência de fixações oculares</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ABA 3: POLÍGONOS & ÁREAS DE INTERESSE (AOI) -->
-    <div id="tab-polygons" class="tab-content hidden grid grid-cols-1 lg:grid-cols-12 gap-6">
-      
-      <!-- Canvas com Polígonos de AOI e Envoltória Convexa (8 colunas) -->
-      <div class="lg:col-span-8 flex flex-col gap-3">
-        <div class="glass-panel rounded-2xl overflow-hidden flex flex-col h-[600px]">
-          <div class="px-5 py-3 border-b border-cyan-500/20 bg-slate-900/60 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
-              <h2 class="text-sm font-semibold text-white tracking-wide">POLÍGONOS DE ÁREA DE INTERESSE (AOI) & ENVOLTÓRIA CONVEXA</h2>
-            </div>
-            <div class="text-[11px] font-mono text-cyan-400">ALGORITMO GRAHAM SCAN + RAY-CASTING</div>
-          </div>
-
-          <div class="relative flex-1 w-full bg-[#080d1a]">
-            <canvas id="aoi-canvas" class="w-full h-full"></canvas>
-
-            <div class="absolute bottom-4 left-4 pointer-events-none bg-slate-950/85 px-3 py-2 rounded-xl border border-slate-800 text-xs font-mono">
-              <div class="text-cyan-400 font-bold mb-0.5">ENVOLTÓRIA CONVEXA (CONVEX HULL)</div>
-              <div class="text-slate-400 text-[11px]">Linha tracejada delimita o polígono de exploração do campo de visão</div>
-            </div>
-          </div>
+        <div class="three-legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#00ff88"></div> Foveal 2°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#00d2ff"></div> Parafoveal 10°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#9333ea"></div> Periférico 160°</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#ff2d78"></div> Impacto Tela</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#00f5ff;border-radius:50%"></div> Anel Orbital</div>
         </div>
       </div>
 
-      <!-- Tabela de Métricas dos Polígonos (4 colunas) -->
-      <div class="lg:col-span-4 flex flex-col gap-4">
-        <div class="glass-panel rounded-2xl p-5 flex flex-col gap-4">
-          <div>
-            <h3 class="text-sm font-semibold text-white mb-1">Métricas Biométricas por Polígono</h3>
-            <p class="text-xs text-slate-400">Tempo de permanência (Dwell Time), contagem de fixações e TTFF</p>
-          </div>
+      <!-- Tabs Panel -->
+      <div id="tabs-panel" class="glass-panel">
 
-          <div class="overflow-x-auto">
-            <table class="w-full text-left">
+        <!-- Tab nav -->
+        <nav class="tab-nav">
+          <button class="tab-btn active" data-tab="heatmap">🔥 Heatmap</button>
+          <button class="tab-btn" data-tab="aoi">📐 Polígonos AOI</button>
+          <button class="tab-btn" data-tab="telemetry">📊 Telemetria</button>
+        </nav>
+
+        <!-- Heatmap Tab -->
+        <div id="tab-heatmap" class="tab-content active" style="flex-direction:column">
+          <div class="heatmap-controls">
+            <label>Paleta:
+              <select id="heatmap-palette">
+                <option value="turbo">Turbo</option>
+                <option value="inferno">Inferno</option>
+                <option value="viridis">Viridis</option>
+                <option value="jet">Jet</option>
+                <option value="neon">Neon</option>
+              </select>
+            </label>
+            <label>Raio: <input type="range" id="heatmap-radius" min="15" max="90" value="44" style="width:60px"></label>
+            <label>Opacidade: <input type="range" id="heatmap-opacity" min="0.1" max="1.0" step="0.05" value="0.75" style="width:60px"></label>
+            <label><input type="checkbox" id="heatmap-decay" checked> Decaimento</label>
+            <label><input type="checkbox" id="heatmap-scanpath" checked> Scanpath</label>
+            <label class="btn-sm" style="cursor:pointer">Imagem<input type="file" id="bg-image-upload" accept="image/*" style="display:none"></label>
+            <button id="btn-reset-heatmap" class="btn-sm" style="color:#ff2d78;border-color:rgba(255,45,120,.3)">Limpar</button>
+          </div>
+          <div style="flex:1;position:relative;overflow:hidden">
+            <canvas id="heatmap-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- AOI Tab -->
+        <div id="tab-aoi" class="tab-content" style="flex-direction:column">
+          <div style="flex:1;position:relative;overflow:hidden;background:#040c18">
+            <canvas id="aoi-canvas"></canvas>
+          </div>
+          <div class="aoi-table-wrap" style="max-height:120px;flex:none">
+            <table class="aoi-table">
               <thead>
-                <tr class="border-b border-slate-700 text-[11px] font-mono text-slate-400 uppercase">
-                  <th class="py-2 px-3">Polígono</th>
-                  <th class="py-2 px-3">Dwell Time</th>
-                  <th class="py-2 px-3">Atenção %</th>
-                  <th class="py-2 px-3">Fixações</th>
-                  <th class="py-2 px-3">TTFF</th>
+                <tr>
+                  <th>Polígono</th>
+                  <th>Dwell</th>
+                  <th>Atenção%</th>
+                  <th>Fixações</th>
+                  <th>TTFF</th>
                 </tr>
               </thead>
-              <tbody id="aoi-table-body">
-                <!-- Inserido dinamicamente via JS -->
-              </tbody>
+              <tbody id="aoi-table-body"></tbody>
             </table>
           </div>
+        </div>
 
-          <div class="bg-cyan-950/20 border border-cyan-500/20 p-3.5 rounded-xl text-xs text-slate-300 leading-relaxed">
-            <span class="text-cyan-400 font-bold block mb-1">Algoritmo de Interseção:</span>
-            Utiliza o teorema da curva de Jordan (Ray-Casting) para determinar matematicamente a cada milissegundo se o vetor de olhar está contido no polígono \(\mathcal{P}\).
+        <!-- Telemetry Tab -->
+        <div id="tab-telemetry" class="tab-content">
+          <div style="padding:8px;flex:1;overflow:hidden">
+            <canvas id="oscilloscope-canvas" style="width:100%;height:100%;display:block"></canvas>
           </div>
         </div>
-      </div>
+
+      </div><!-- /tabs-panel -->
+
+    </div><!-- /right-column -->
+
+  </div><!-- /content-area -->
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BOTTOM METRICS BAR
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="bottom-bar">
+    <div class="bottom-metric">
+      <div class="bm-label">Olho Esq 3D (mm)</div>
+      <div id="hud-left-mm" class="bm-value bm-cyan">X:0.0 Y:0.0 Z:0.0</div>
     </div>
-
-    <!-- ABA 4: TELEMETRIA COMPLETA & OSCILOSCÓPIO -->
-    <div id="tab-telemetry" class="tab-content hidden flex flex-col gap-6">
-      
-      <!-- Osciloscópio Biométrico em Tempo Real -->
-      <div class="glass-panel rounded-2xl p-5 flex flex-col gap-3">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-sm font-semibold text-white">OSCILOSCÓPIO BIOMÉTRICO // SÉRIES TEMPORAIS OCULARES</h2>
-            <p class="text-xs text-slate-400">Ondas em tempo real de Gaze X, Gaze Y e Abertura Palpebral EAR</p>
-          </div>
-          <span class="text-xs font-mono text-cyan-400 bg-cyan-950 px-2.5 py-1 rounded-lg border border-cyan-500/30">TAXA: 60Hz</span>
-        </div>
-
-        <div class="w-full h-48 bg-[#050914] rounded-xl overflow-hidden border border-slate-800">
-          <canvas id="oscilloscope-canvas" class="w-full h-full"></canvas>
-        </div>
-      </div>
-
-      <!-- Tabela Completa de Coordenadas 3D e Matriz de Homografia -->
-      <div class="glass-panel rounded-2xl p-5 flex flex-col gap-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h3 class="text-sm font-semibold text-white">Especificações Matemáticas & Dataset de Coordenadas</h3>
-            <p class="text-xs text-slate-400">Coordenadas cartesianas no referencial da câmera e da tela do dispositivo</p>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="window.oculusApp.exportCSVFile()" class="btn-neon-cyan px-3 py-1.5 rounded-lg text-xs font-mono">
-              Exportar Dataset CSV
-            </button>
-            <button onclick="window.oculusApp.exportJSONFile()" class="px-3 py-1.5 rounded-lg bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500 text-purple-300 text-xs font-mono transition-all">
-              Exportar Relatório JSON
-            </button>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
-          <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
-            <span class="text-cyan-400 font-bold block mb-2">// VETOR PUPILAR 3D (ESQUERDO)</span>
-            <p class="text-slate-300">Coordenada X: <span class="text-white">Normalizada [0..1]</span></p>
-            <p class="text-slate-300">Coordenada Y: <span class="text-white">Normalizada [0..1]</span></p>
-            <p class="text-slate-300">Profundidade Z: <span class="text-white">Milimétrica (-50..+50)</span></p>
-            <p class="text-slate-300">Diâmetro Pupilar: <span class="text-emerald-400">3.4 mm</span></p>
-          </div>
-
-          <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
-            <span class="text-pink-400 font-bold block mb-2">// VETOR PUPILAR 3D (DIREITO)</span>
-            <p class="text-slate-300">Coordenada X: <span class="text-white">Normalizada [0..1]</span></p>
-            <p class="text-slate-300">Coordenada Y: <span class="text-white">Normalizada [0..1]</span></p>
-            <p class="text-slate-300">Profundidade Z: <span class="text-white">Milimétrica (-50..+50)</span></p>
-            <p class="text-slate-300">Diâmetro Pupilar: <span class="text-emerald-400">3.4 mm</span></p>
-          </div>
-
-          <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
-            <span class="text-purple-400 font-bold block mb-2">// REGRESSÃO POLINOMIAL</span>
-            <p class="text-slate-300">Grau do Modelo: <span class="text-white">Bivariado Quadrático (Ridge)</span></p>
-            <p class="text-slate-300">Regularização λ: <span class="text-white">0.001</span></p>
-            <p class="text-slate-300">Compensação de Pose: <span class="text-emerald-400">Yaw + Pitch + Roll</span></p>
-            <p class="text-slate-300">Latência Total: <span class="text-cyan-400">&lt; 16.6 ms</span></p>
-          </div>
-        </div>
-      </div>
-
+    <div class="bottom-metric">
+      <div class="bm-label">Olho Dir 3D (mm)</div>
+      <div id="hud-right-mm" class="bm-value bm-cyan">X:0.0 Y:0.0 Z:0.0</div>
     </div>
-  </main>
-
-  <!-- MODAL DE CALIBRAÇÃO GUIADA DE 9 PONTOS -->
-  <div id="calibration-modal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md hidden flex flex-col items-center justify-center">
-    
-    <!-- Alvo de Calibração Móvel Pulsante -->
-    <div id="calibration-target" class="absolute w-12 h-12 rounded-full border-4 border-cyan-400 bg-cyan-400/30 animate-pulse-target flex items-center justify-center transition-all duration-500 ease-out">
-      <div class="w-3 h-3 rounded-full bg-white shadow-[0_0_12px_#ffffff]"></div>
+    <div class="bottom-metric">
+      <div class="bm-label">Gaze Tela</div>
+      <div id="hud-gaze-px" class="bm-value bm-pink">X:0px Y:0px (0.50, 0.50)</div>
     </div>
-
-    <!-- Instruções na Base -->
-    <div class="absolute bottom-12 max-w-md w-full text-center px-6">
-      <div class="glass-panel p-4 rounded-2xl border border-cyan-500/40">
-        <h3 class="text-sm font-bold text-cyan-400 mb-1">Calibração Biométrico-Polinomial</h3>
-        <p id="calibration-progress" class="text-xs text-slate-300 mb-3">Mantenha o olhar fixo no alvo pulsante...</p>
-        <button id="btn-cancel-calibration" class="text-xs text-slate-400 hover:text-white underline">
-          Cancelar Calibração
-        </button>
-      </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Pose Cabeça</div>
+      <div id="hud-head-pose" class="bm-value bm-purple">P:0° Y:0° R:0°</div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">IPD &amp; Ângulo Visual</div>
+      <div class="bm-value bm-green"><span id="hud-ipd">63.2mm</span> / <span id="hud-visual-angle">0.0°</span></div>
+    </div>
+    <div class="bottom-metric">
+      <div class="bm-label">Piscadas &amp; EAR</div>
+      <div id="hud-blinks" class="bm-value bm-amber">0 (0BPM) EAR:0.28</div>
     </div>
   </div>
 
-  <!-- RODAPÉ -->
-  <footer class="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500">
-    <div class="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-2">
-      <div>OCULUS-AI // Sistema de Deep Learning para Rastreamento Ocular, Campo de Visão 3D e Mapas de Calor</div>
-      <div class="font-mono text-cyan-400/80">Otimizado para Vercel Edge & Zero-Config Deployment</div>
-    </div>
-  </footer>
+</div><!-- /app-shell -->
 
-  <!-- SCRIPT MESTRE DA APLICAÇÃO (ES6 MODULE) -->
-  <script type="module" src="js/app.js"></script>
+<!-- ─── CALIBRATION MODAL ───────────────────────────────────── -->
+<div id="calibration-modal">
+  <div id="calibration-target"></div>
+  <div class="cal-info">
+    <h3>Calibração Biométrico-Polinomial</h3>
+    <p id="calibration-progress">Mantenha o olhar fixo no alvo pulsante...</p>
+    <button id="btn-cancel-calibration">Cancelar Calibração</button>
+  </div>
+</div>
+
+<!-- ─── APP SCRIPT ──────────────────────────────────────────── -->
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

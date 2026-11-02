@@ -1,437 +1,378 @@
 /**
- * OCULUS-AI // 3D Field of View (FOV) & Visual Cone Engine (Three.js)
- * Renderiza em tempo real o globo ocular 3D, cones do campo de visão (foveal 2°,
- * parafoveal 10°, periférico 160°x135°), raio de olhar 3D e malha facial.
+ * OCULUS-AI // 3D Field of View (FOV) Engine v2.0 (Three.js)
+ * Globos oculares anatômicos, cones FOV vistosos, anéis orbitais, nuvem facial.
  */
 
 export class ThreeVisualizer {
   constructor(containerElement) {
     this.container = containerElement;
-    this.scene = null;
-    this.camera = null;
+
+    this.scene    = null;
+    this.camera   = null;
     this.renderer = null;
     this.controls = null;
-    this.animationFrameId = null;
+    this.animId   = null;
 
-    // Elementos 3D
-    this.leftEyeball = null;
+    this.leftEyeball  = null;
     this.rightEyeball = null;
-    this.gazeRayGroup = null;
-    this.fovConesGroup = null;
-    this.faceCloud = null;
-    this.screenPlane = null;
-    this.hitPoint = null;
+    this.fovGroup     = null;
+    this.faceCloud    = null;
+    this.screenPlane  = null;
+    this.hitPoint     = null;
+    this.leftRing     = null;
+    this.rightRing    = null;
 
-    // Configurações do Campo de Visão
-    this.showCones = true;
-    this.showRay = true;
+    this.showCones     = true;
     this.showFaceCloud = true;
-    this.showScreenPlane = true;
+
+    this._t = 0; // animation tick
 
     this.init();
   }
 
   init() {
-    const width = this.container.clientWidth || 600;
-    const height = this.container.clientHeight || 450;
+    const W = this.container.clientWidth  || 500;
+    const H = this.container.clientHeight || 400;
 
-    // 1. Cena Three.js
+    // ── Scene ─────────────────────────────────────────────────────
     this.scene = new window.THREE.Scene();
-    this.scene.background = new window.THREE.Color(0x070b14);
-    this.scene.fog = new window.THREE.FogExp2(0x070b14, 0.002);
+    this.scene.background = new window.THREE.Color(0x040812);
+    this.scene.fog = new window.THREE.FogExp2(0x040812, 0.0009);
 
-    // 2. Câmera Perspectiva
-    this.camera = new window.THREE.PerspectiveCamera(45, width / height, 1, 3000);
-    this.camera.position.set(0, 50, 480);
+    // ── Camera ────────────────────────────────────────────────────
+    this.camera = new window.THREE.PerspectiveCamera(42, W / H, 0.5, 3000);
+    this.camera.position.set(0, 25, 240);
 
-    // 3. Renderer WebGL com Anti-Aliasing
-    this.renderer = new window.THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance'
-    });
-    this.renderer.setSize(width, height);
+    // ── Renderer ──────────────────────────────────────────────────
+    this.renderer = new window.THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setSize(W, H);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = false;
     this.container.appendChild(this.renderer.domElement);
 
-    // 4. OrbitControls
+    // ── OrbitControls ─────────────────────────────────────────────
     if (window.THREE.OrbitControls) {
       this.controls = new window.THREE.OrbitControls(this.camera, this.renderer.domElement);
-      this.controls.enableDamping = true;
-      this.controls.dampingFactor = 0.05;
-      this.controls.maxDistance = 1500;
-      this.controls.minDistance = 50;
+      this.controls.enableDamping  = true;
+      this.controls.dampingFactor  = 0.06;
+      this.controls.maxDistance    = 1200;
+      this.controls.minDistance    = 40;
       this.controls.target.set(0, 0, 0);
     }
 
-    // 5. Iluminação
-    this.setupLighting();
+    this._buildLighting();
+    this._buildGrid();
+    this._buildEyeballs();
+    this._buildOrbitRings();
+    this._buildFOVCones();
+    this._buildFaceCloud();
+    this._buildScreenPlane();
 
-    // 6. Grid e Eixos de Referência
-    this.setupEnvironment();
+    this._animate();
 
-    // 7. Globos Oculares 3D Anatômicos
-    this.setupEyeballs();
-
-    // 8. Cones 3D do Campo de Visão (Foveal, Parafoveal, Periférico)
-    this.setupFOVCones();
-
-    // 9. Nuvem de Pontos da Face 3D
-    this.setupFacePointCloud();
-
-    // 10. Plano de Projeção Virtual da Tela
-    this.setupScreenPlane();
-
-    // Loop de Renderização
-    this.animate();
-
-    // Resize Observer
-    this.resizeObserver = new ResizeObserver(() => this.onResize());
-    this.resizeObserver.observe(this.container);
+    this._ro = new ResizeObserver(() => this.onResize());
+    this._ro.observe(this.container);
   }
 
-  setupLighting() {
-    const ambientLight = new window.THREE.AmbientLight(0x223355, 1.5);
-    this.scene.add(ambientLight);
+  // ── Iluminação ────────────────────────────────────────────────────
+  _buildLighting() {
+    this.scene.add(new window.THREE.AmbientLight(0x1a2540, 2.2));
 
-    const keyLight = new window.THREE.DirectionalLight(0x00f0ff, 2.0);
-    keyLight.position.set(100, 150, 200);
-    this.scene.add(keyLight);
+    const key = new window.THREE.DirectionalLight(0x00f5ff, 3.0);
+    key.position.set(80, 120, 180);
+    this.scene.add(key);
 
-    const fillLight = new window.THREE.DirectionalLight(0x7000ff, 1.2);
-    fillLight.position.set(-100, -100, -100);
-    this.scene.add(fillLight);
+    const fill = new window.THREE.DirectionalLight(0x9333ea, 2.0);
+    fill.position.set(-80, -80, -80);
+    this.scene.add(fill);
 
-    const topLight = new window.THREE.PointLight(0xffffff, 0.8, 1000);
-    topLight.position.set(0, 200, 0);
-    this.scene.add(topLight);
+    const rim = new window.THREE.DirectionalLight(0xff2d78, 1.2);
+    rim.position.set(0, -50, -150);
+    this.scene.add(rim);
+
+    const top = new window.THREE.PointLight(0xffffff, 0.8, 800);
+    top.position.set(0, 180, 0);
+    this.scene.add(top);
   }
 
-  setupEnvironment() {
-    // Grid cybernético no chão
-    const gridHelper = new window.THREE.GridHelper(800, 40, 0x00f0ff, 0x112233);
-    gridHelper.position.y = -120;
-    this.scene.add(gridHelper);
+  // ── Grid ──────────────────────────────────────────────────────────
+  _buildGrid() {
+    const g = new window.THREE.GridHelper(900, 70, 0x00f5ff, 0x0a1422);
+    g.position.y = -110;
+    this.scene.add(g);
+
+    // Segundo grid mais grosso como referência
+    const g2 = new window.THREE.GridHelper(900, 14, 0x00f5ff, 0x091220);
+    g2.position.y = -110.5;
+    this.scene.add(g2);
   }
 
-  createEyeballMesh() {
-    const group = new window.THREE.Group();
+  // ── Globo Ocular ─────────────────────────────────────────────────
+  _makeEyeball() {
+    const grp = new window.THREE.Group();
+    const R = 22;
 
-    // Esclera (Globo Branco com reflexo perolado)
-    const scleraGeo = new window.THREE.SphereGeometry(14, 32, 32);
-    const scleraMat = new window.THREE.MeshPhongMaterial({
-      color: 0xeeeeee,
-      shininess: 90,
-      specular: 0x555555
+    // Esclera
+    const sclGeo = new window.THREE.SphereGeometry(R, 64, 64);
+    const sclMat = new window.THREE.MeshPhongMaterial({
+      color:     0xeef4ff,
+      shininess: 140,
+      specular:  0x99bbdd
     });
-    const scleraMesh = new window.THREE.Mesh(scleraGeo, scleraMat);
-    group.add(scleraMesh);
+    grp.add(new window.THREE.Mesh(sclGeo, sclMat));
 
-    // Íris (Disco colorido azul ciano biométrico)
-    const irisGeo = new window.THREE.CircleGeometry(6.2, 32);
-    const irisMat = new window.THREE.MeshBasicMaterial({
-      color: 0x00d2ff,
+    // Íris (disco colorido)
+    const irisGeo = new window.THREE.CircleGeometry(8.8, 64);
+    const irisMat = new window.THREE.MeshPhongMaterial({
+      color:     0x1a8fff,
+      shininess: 60,
+      specular:  0x448899,
       side: window.THREE.DoubleSide
     });
-    const irisMesh = new window.THREE.Mesh(irisGeo, irisMat);
-    irisMesh.position.z = 13.6;
-    group.add(irisMesh);
+    const iris = new window.THREE.Mesh(irisGeo, irisMat);
+    iris.position.z = R - 0.4;
+    grp.add(iris);
 
-    // Borda da Íris (Anel escuro)
-    const ringGeo = new window.THREE.RingGeometry(5.8, 6.4, 32);
-    const ringMat = new window.THREE.MeshBasicMaterial({
-      color: 0x004466,
-      side: window.THREE.DoubleSide
+    // Anel límbico escuro
+    const limGeo = new window.THREE.RingGeometry(8.2, 9.0, 64);
+    const limMat = new window.THREE.MeshBasicMaterial({ color: 0x003366, side: window.THREE.DoubleSide });
+    const lim = new window.THREE.Mesh(limGeo, limMat);
+    lim.position.z = R - 0.35;
+    grp.add(lim);
+
+    // Pupila
+    const pupGeo = new window.THREE.CircleGeometry(4.2, 48);
+    const pupMat = new window.THREE.MeshBasicMaterial({ color: 0x020408, side: window.THREE.DoubleSide });
+    const pup = new window.THREE.Mesh(pupGeo, pupMat);
+    pup.position.z = R - 0.2;
+    grp.add(pup);
+
+    // Highlight de córnea
+    const hlGeo = new window.THREE.CircleGeometry(1.1, 16);
+    const hlMat = new window.THREE.MeshBasicMaterial({ color: 0xffffff, side: window.THREE.DoubleSide });
+    const hl = new window.THREE.Mesh(hlGeo, hlMat);
+    hl.position.set(2.5, 2.5, R + 0.12);
+    grp.add(hl);
+
+    // Córnea convexa transparente
+    const corGeo = new window.THREE.SphereGeometry(10, 32, 32, 0, Math.PI * 2, 0, Math.PI * 0.22);
+    const corMat = new window.THREE.MeshPhongMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.06,
+      shininess: 300, specular: 0xffffff
     });
-    const ringMesh = new window.THREE.Mesh(ringGeo, ringMat);
-    ringMesh.position.z = 13.65;
-    group.add(ringMesh);
+    const cor = new window.THREE.Mesh(corGeo, corMat);
+    cor.position.z = R - 1.5;
+    grp.add(cor);
 
-    // Pupila (Centro negro)
-    const pupilGeo = new window.THREE.CircleGeometry(2.8, 32);
-    const pupilMat = new window.THREE.MeshBasicMaterial({
-      color: 0x020509,
-      side: window.THREE.DoubleSide
-    });
-    const pupilMesh = new window.THREE.Mesh(pupilGeo, pupilMat);
-    pupilMesh.position.z = 13.7;
-    group.add(pupilMesh);
-
-    // Brilho da Córnea
-    const glintGeo = new window.THREE.CircleGeometry(0.8, 16);
-    const glintMat = new window.THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: window.THREE.DoubleSide
-    });
-    const glintMesh = new window.THREE.Mesh(glintGeo, glintMat);
-    glintMesh.position.set(1.5, 1.5, 13.75);
-    group.add(glintMesh);
-
-    return group;
+    return grp;
   }
 
-  setupEyeballs() {
-    // Distância interpupilar anatômica média (IPD = ~63mm)
-    const ipdOffset = 31.5;
+  _buildEyeballs() {
+    const ipd = 40;
 
-    this.leftEyeball = this.createEyeballMesh();
-    this.leftEyeball.position.set(ipdOffset, 0, 0);
+    this.leftEyeball = this._makeEyeball();
+    this.leftEyeball.position.set(ipd, 0, 0);
     this.scene.add(this.leftEyeball);
 
-    this.rightEyeball = this.createEyeballMesh();
-    this.rightEyeball.position.set(-ipdOffset, 0, 0);
+    this.rightEyeball = this._makeEyeball();
+    this.rightEyeball.position.set(-ipd, 0, 0);
     this.scene.add(this.rightEyeball);
   }
 
-  setupFOVCones() {
-    this.fovConesGroup = new window.THREE.Group();
-
-    // 1. Cone Foveal (Visão Central Aguda ~2° de abertura)
-    // Raio da base = tan(1°) * comprimento = 0.0175 * 250 = ~4.4
-    const fovealLength = 260;
-    const fovealRadius = Math.tan((1.5 * Math.PI) / 180) * fovealLength;
-    const fovealGeo = new window.THREE.ConeGeometry(fovealRadius, fovealLength, 32, 1, true);
-    // Move a base para a frente ao longo de Z
-    fovealGeo.translate(0, -fovealLength / 2, 0);
-    fovealGeo.rotateX(-Math.PI / 2);
-
-    const fovealMat = new window.THREE.MeshBasicMaterial({
-      color: 0x00ff88,
-      transparent: true,
-      opacity: 0.45,
-      wireframe: false,
-      side: window.THREE.DoubleSide
+  // ── Anéis Orbitais ────────────────────────────────────────────────
+  _buildOrbitRings() {
+    const ringGeo = new window.THREE.TorusGeometry(50, 0.7, 8, 80);
+    const ringMat = new window.THREE.MeshBasicMaterial({
+      color: 0x00f5ff, transparent: true, opacity: 0.4
     });
-    const fovealCone = new window.THREE.Mesh(fovealGeo, fovealMat);
-    this.fovConesGroup.add(fovealCone);
 
-    // 2. Cone Parafoveal (Reconhecimento de Palavras e Detalhes ~10° de abertura)
-    const parafovealRadius = Math.tan((5.0 * Math.PI) / 180) * fovealLength;
-    const parafovealGeo = new window.THREE.ConeGeometry(parafovealRadius, fovealLength, 32, 1, true);
-    parafovealGeo.translate(0, -fovealLength / 2, 0);
-    parafovealGeo.rotateX(-Math.PI / 2);
+    this.leftRing = new window.THREE.Mesh(ringGeo, ringMat);
+    this.leftRing.position.set(40, 0, 0);
+    this.leftRing.rotation.y = Math.PI / 3;
+    this.scene.add(this.leftRing);
 
-    const parafovealMat = new window.THREE.MeshBasicMaterial({
-      color: 0x00d2ff,
-      transparent: true,
-      opacity: 0.18,
-      wireframe: false,
-      side: window.THREE.DoubleSide
-    });
-    const parafovealCone = new window.THREE.Mesh(parafovealGeo, parafovealMat);
-    this.fovConesGroup.add(parafovealCone);
-
-    // 3. Frustum do Campo de Visão Periférico (~160° horizontal x 135° vertical)
-    const peripheralRadius = Math.tan((35.0 * Math.PI) / 180) * (fovealLength * 0.75);
-    const peripheralGeo = new window.THREE.ConeGeometry(peripheralRadius, fovealLength * 0.75, 24, 4, true);
-    peripheralGeo.translate(0, -(fovealLength * 0.75) / 2, 0);
-    peripheralGeo.rotateX(-Math.PI / 2);
-
-    const peripheralMat = new window.THREE.MeshBasicMaterial({
-      color: 0x7700ff,
-      transparent: true,
-      opacity: 0.12,
-      wireframe: true,
-      side: window.THREE.DoubleSide
-    });
-    const peripheralFrustum = new window.THREE.Mesh(peripheralGeo, peripheralMat);
-    this.fovConesGroup.add(peripheralFrustum);
-
-    // Raio Laser Central do Vetor de Olhar
-    const rayGeo = new window.THREE.BufferGeometry().setFromPoints([
-      new window.THREE.Vector3(0, 0, 0),
-      new window.THREE.Vector3(0, 0, 350)
-    ]);
-    const rayMat = new window.THREE.LineBasicMaterial({
-      color: 0x00ffcc,
-      linewidth: 3
-    });
-    const rayLine = new window.THREE.Line(rayGeo, rayMat);
-    this.fovConesGroup.add(rayLine);
-
-    this.scene.add(this.fovConesGroup);
+    this.rightRing = new window.THREE.Mesh(ringGeo.clone(), ringMat.clone());
+    this.rightRing.position.set(-40, 0, 0);
+    this.rightRing.rotation.y = -Math.PI / 3;
+    this.scene.add(this.rightRing);
   }
 
-  setupFacePointCloud() {
-    // Nuvem de pontos estilizada para representar os 478 marcos do FaceMesh
-    const particleCount = 478;
-    const geometry = new window.THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
+  // ── Cones de Campo de Visão ───────────────────────────────────────
+  _buildFOVCones() {
+    this.fovGroup = new window.THREE.Group();
+    const L = 270;
 
-    const baseColor = new window.THREE.Color(0x00f0ff);
-    for (let i = 0; i < particleCount; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 80;
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 90;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 40;
+    const makeCone = (radius, color, opacity, wire = false) => {
+      const geo = new window.THREE.ConeGeometry(radius, L, 48, 1, true);
+      geo.translate(0, -L / 2, 0);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new window.THREE.MeshBasicMaterial({
+        color, transparent: true, opacity,
+        wireframe: wire,
+        side: window.THREE.DoubleSide
+      });
+      return new window.THREE.Mesh(geo, mat);
+    };
 
-      colors[i * 3] = baseColor.r;
-      colors[i * 3 + 1] = baseColor.g;
-      colors[i * 3 + 2] = baseColor.b;
+    // Foveal 2° — verde neon brilhante
+    const fovRad = Math.tan((1.5 * Math.PI) / 180) * L;
+    this.fovGroup.add(makeCone(fovRad, 0x00ff88, 0.65));
+
+    // Parafoveal 10° — ciano
+    const paraRad = Math.tan((5.5 * Math.PI) / 180) * L;
+    this.fovGroup.add(makeCone(paraRad, 0x00d2ff, 0.20));
+
+    // Periférico 160° — wireframe roxo
+    const periRad = Math.tan((36 * Math.PI) / 180) * (L * 0.72);
+    const periGeo = new window.THREE.ConeGeometry(periRad, L * 0.72, 24, 4, true);
+    periGeo.translate(0, -(L * 0.72) / 2, 0);
+    periGeo.rotateX(-Math.PI / 2);
+    const periMat = new window.THREE.MeshBasicMaterial({
+      color: 0x9333ea, transparent: true, opacity: 0.22, wireframe: true, side: window.THREE.DoubleSide
+    });
+    this.fovGroup.add(new window.THREE.Mesh(periGeo, periMat));
+
+    // Raio laser do olhar
+    const rayPts = [new window.THREE.Vector3(0, 0, 0), new window.THREE.Vector3(0, 0, L + 30)];
+    const rayGeo = new window.THREE.BufferGeometry().setFromPoints(rayPts);
+    const rayMat = new window.THREE.LineBasicMaterial({ color: 0x00ffcc, linewidth: 2 });
+    this.fovGroup.add(new window.THREE.Line(rayGeo, rayMat));
+
+    this.scene.add(this.fovGroup);
+  }
+
+  // ── Nuvem de Pontos Facial ────────────────────────────────────────
+  _buildFaceCloud() {
+    const N = 478;
+    const geo = new window.THREE.BufferGeometry();
+    const pos = new Float32Array(N * 3);
+    const col = new Float32Array(N * 3);
+    const c   = new window.THREE.Color(0x00f5ff);
+
+    for (let i = 0; i < N; i++) {
+      pos[i*3]   = (Math.random() - 0.5) * 90;
+      pos[i*3+1] = (Math.random() - 0.5) * 100;
+      pos[i*3+2] = (Math.random() - 0.5) * 45;
+      col[i*3]   = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
     }
 
-    geometry.setAttribute('position', new window.THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new window.THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('position', new window.THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color',    new window.THREE.BufferAttribute(col, 3));
 
-    const material = new window.THREE.PointsMaterial({
-      size: 3.5,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.65
+    const mat = new window.THREE.PointsMaterial({
+      size: 3.0, vertexColors: true, transparent: true, opacity: 0.6
     });
-
-    this.faceCloud = new window.THREE.Points(geometry, material);
+    this.faceCloud = new window.THREE.Points(geo, mat);
     this.scene.add(this.faceCloud);
   }
 
-  setupScreenPlane() {
-    // Plano que simula a tela do monitor a 280 unidades à frente
-    const planeGeo = new window.THREE.PlaneGeometry(360, 220);
+  // ── Plano de Tela Virtual ─────────────────────────────────────────
+  _buildScreenPlane() {
+    const planeGeo = new window.THREE.PlaneGeometry(380, 240);
     const planeMat = new window.THREE.MeshBasicMaterial({
-      color: 0x0f1c30,
-      transparent: true,
-      opacity: 0.5,
-      side: window.THREE.DoubleSide
+      color: 0x0b1a2e, transparent: true, opacity: 0.45, side: window.THREE.DoubleSide
     });
     this.screenPlane = new window.THREE.Mesh(planeGeo, planeMat);
-    this.screenPlane.position.set(0, 0, 280);
+    this.screenPlane.position.set(0, 0, 270);
 
-    // Borda da Tela
-    const wireGeo = new window.THREE.EdgesGeometry(planeGeo);
-    const wireMat = new window.THREE.LineBasicMaterial({ color: 0x00f0ff, linewidth: 2 });
-    const wireMesh = new window.THREE.LineSegments(wireGeo, wireMat);
-    this.screenPlane.add(wireMesh);
+    const edgeGeo = new window.THREE.EdgesGeometry(planeGeo);
+    const edgeMat = new window.THREE.LineBasicMaterial({ color: 0x00f5ff });
+    this.screenPlane.add(new window.THREE.LineSegments(edgeGeo, edgeMat));
 
-    // Ponto de Impacto do Olhar (Hit Point)
-    const hitGeo = new window.THREE.SphereGeometry(4, 16, 16);
-    const hitMat = new window.THREE.MeshBasicMaterial({ color: 0xff0055 });
+    // Ponto de impacto
+    const hitGeo = new window.THREE.SphereGeometry(5, 16, 16);
+    const hitMat = new window.THREE.MeshBasicMaterial({ color: 0xff2d78 });
     this.hitPoint = new window.THREE.Mesh(hitGeo, hitMat);
+    this.hitPoint.position.set(0, 0, 2);
     this.screenPlane.add(this.hitPoint);
 
     this.scene.add(this.screenPlane);
   }
 
-  /**
-   * Atualiza a orientação e rotação do modelo 3D com dados de rastreamento
-   */
+  // ── Update por frame ──────────────────────────────────────────────
   update(eyeData, gazePrediction) {
-    if (!eyeData || !eyeData.detected) return;
+    if (!eyeData?.detected) return;
+    this._t += 0.012;
 
-    // 1. Rotação do Olhar em Radianos
-    // Mapeia proporção da íris (0.0 a 1.0) para ângulos oculares (-25° a +25°)
-    const leftRatioX = eyeData.leftRatios ? eyeData.leftRatios.x : 0.5;
-    const leftRatioY = eyeData.leftRatios ? eyeData.leftRatios.y : 0.5;
-    const rightRatioX = eyeData.rightRatios ? eyeData.rightRatios.x : 0.5;
-    const rightRatioY = eyeData.rightRatios ? eyeData.rightRatios.y : 0.5;
+    // Rotação dos anéis
+    if (this.leftRing)  this.leftRing.rotation.z  = this._t;
+    if (this.rightRing) this.rightRing.rotation.z = -this._t * 1.2;
 
-    const leftYaw = (leftRatioX - 0.5) * 0.9;
-    const leftPitch = -(leftRatioY - 0.5) * 0.7;
+    // Olhar das pupilas
+    const lrx = eyeData.leftRatios?.x  ?? 0.5;
+    const lry = eyeData.leftRatios?.y  ?? 0.5;
+    const rrx = eyeData.rightRatios?.x ?? 0.5;
+    const rry = eyeData.rightRatios?.y ?? 0.5;
 
-    const rightYaw = (rightRatioX - 0.5) * 0.9;
-    const rightPitch = -(rightRatioY - 0.5) * 0.7;
+    const lYaw   = (lrx - 0.5) *  0.85;
+    const lPitch = -(lry - 0.5) * 0.65;
+    const rYaw   = (rrx - 0.5) *  0.85;
+    const rPitch = -(rry - 0.5) * 0.65;
 
     if (this.leftEyeball) {
-      this.leftEyeball.rotation.y = leftYaw;
-      this.leftEyeball.rotation.x = leftPitch;
+      this.leftEyeball.rotation.y  = lYaw;
+      this.leftEyeball.rotation.x  = lPitch;
     }
-
     if (this.rightEyeball) {
-      this.rightEyeball.rotation.y = rightYaw;
-      this.rightEyeball.rotation.x = rightPitch;
+      this.rightEyeball.rotation.y = rYaw;
+      this.rightEyeball.rotation.x = rPitch;
     }
 
-    // 2. Orientação do Cone FOV e Raio 3D
-    const avgYaw = (leftYaw + rightYaw) / 2;
-    const avgPitch = (leftPitch + rightPitch) / 2;
-
-    if (this.fovConesGroup) {
-      this.fovConesGroup.rotation.y = avgYaw;
-      this.fovConesGroup.rotation.x = avgPitch;
+    // Cone aponta para a média dos dois olhos
+    const avgYaw   = (lYaw   + rYaw)   / 2;
+    const avgPitch = (lPitch + rPitch) / 2;
+    if (this.fovGroup) {
+      this.fovGroup.rotation.y = avgYaw;
+      this.fovGroup.rotation.x = avgPitch;
     }
 
-    // 3. Atualização do Ponto de Impacto na Tela Virtual 3D
+    // Ponto de impacto
     if (this.hitPoint && gazePrediction) {
-      const planeWidth = 360;
-      const planeHeight = 220;
-      const hitX = (gazePrediction.normX - 0.5) * planeWidth;
-      const hitY = -(gazePrediction.normY - 0.5) * planeHeight;
-      this.hitPoint.position.set(hitX, hitY, 1);
+      const px = (gazePrediction.normX - 0.5) * 380;
+      const py = -(gazePrediction.normY - 0.5) * 240;
+      this.hitPoint.position.set(px, py, 2);
     }
 
-    // 4. Atualização da Nuvem de Marcos 3D Faciais
+    // Nuvem de pontos facial
     if (this.faceCloud && eyeData.allLandmarks && this.showFaceCloud) {
-      const posAttr = this.faceCloud.geometry.attributes.position;
-      const landmarks = eyeData.allLandmarks;
-
-      const scale = 220;
-      for (let i = 0; i < landmarks.length && i < 478; i++) {
-        const lm = landmarks[i];
-        // Centraliza em relação ao nariz
-        const nx = (0.5 - lm.x) * scale;
-        const ny = (0.5 - lm.y) * scale;
-        const nz = -lm.z * scale * 1.5;
-
-        posAttr.setXYZ(i, nx, ny, nz);
+      const attr = this.faceCloud.geometry.attributes.position;
+      const lms  = eyeData.allLandmarks;
+      for (let i = 0; i < lms.length && i < 478; i++) {
+        const l = lms[i];
+        attr.setXYZ(i, (0.5 - l.x) * 220, (0.5 - l.y) * 220, -l.z * 200);
       }
-      posAttr.needsUpdate = true;
+      attr.needsUpdate = true;
     }
   }
 
-  animate() {
-    this.animationFrameId = requestAnimationFrame(() => this.animate());
-
-    if (this.controls) {
-      this.controls.update();
-    }
-
-    if (this.renderer && this.scene && this.camera) {
-      this.renderer.render(this.scene, this.camera);
-    }
-  }
-
-  resetCamera() {
-    if (this.camera && this.controls) {
-      this.camera.position.set(0, 50, 480);
-      this.controls.target.set(0, 0, 0);
-      this.controls.update();
-    }
-  }
-
-  toggleFOVCones(visible) {
-    this.showCones = visible;
-    if (this.fovConesGroup) this.fovConesGroup.visible = visible;
-  }
-
-  toggleFaceCloud(visible) {
-    this.showFaceCloud = visible;
-    if (this.faceCloud) this.faceCloud.visible = visible;
-  }
-
-  toggleScreenPlane(visible) {
-    this.showScreenPlane = visible;
-    if (this.screenPlane) this.screenPlane.visible = visible;
+  _animate() {
+    this.animId = requestAnimationFrame(() => this._animate());
+    this.controls?.update();
+    this.renderer?.render(this.scene, this.camera);
   }
 
   onResize() {
-    if (!this.container || !this.renderer || !this.camera) return;
-    const width = this.container.clientWidth;
-    const height = this.container.clientHeight;
-    if (width === 0 || height === 0) return;
-
-    this.camera.aspect = width / height;
+    const W = this.container.clientWidth;
+    const H = this.container.clientHeight;
+    if (!W || !H || !this.renderer) return;
+    this.camera.aspect = W / H;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    this.renderer.setSize(W, H);
   }
 
+  resetCamera() {
+    this.camera.position.set(0, 25, 240);
+    this.controls?.target.set(0, 0, 0);
+    this.controls?.update();
+  }
+
+  toggleFOVCones(v)    { this.showCones = v;     if (this.fovGroup)  this.fovGroup.visible  = v; }
+  toggleFaceCloud(v)   { this.showFaceCloud = v;  if (this.faceCloud) this.faceCloud.visible = v; }
+  toggleScreenPlane(v) { if (this.screenPlane) this.screenPlane.visible = v; }
+
   destroy() {
-    if (this.animationFrameId) {
-      cancelAnimationFrame(this.animationFrameId);
-    }
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-    }
-    if (this.renderer && this.renderer.domElement) {
-      this.container.removeChild(this.renderer.domElement);
-    }
+    if (this.animId) cancelAnimationFrame(this.animId);
+    this._ro?.disconnect();
+    if (this.renderer?.domElement) this.container.removeChild(this.renderer.domElement);
   }
 }

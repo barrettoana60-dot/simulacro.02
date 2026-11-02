@@ -1,406 +1,347 @@
 /**
- * OCULUS-AI // Deep Learning Eye & Face Mesh Tracking Module
- * Utiliza MediaPipe Face Mesh com refinamento de íris (478 landmarks 3D)
- * para rastreamento biométrico sub-milimétrico em tempo real.
+ * OCULUS-AI // Deep Learning Eye & Face Mesh Tracking Module v2.0
+ * MediaPipe FaceMesh 478 landmarks com refinamento de íris, filtro Kalman-like,
+ * recovery automático de perda de tracking e melhor estabilidade para câmera frontal.
  */
 
 export class EyeTracker {
   constructor(options = {}) {
-    this.videoElement = options.videoElement;
+    this.videoElement      = options.videoElement;
     this.onResultsCallback = options.onResults || null;
-    this.onErrorCallback = options.onError || null;
-    this.onStatusCallback = options.onStatus || null;
+    this.onErrorCallback   = options.onError   || null;
+    this.onStatusCallback  = options.onStatus  || null;
 
-    this.faceMesh = null;
-    this.camera = null;
+    this.faceMesh  = null;
     this.isRunning = false;
-    this.isCameraActive = false;
-    this.lastFrameTime = performance.now();
-    this.fps = 0;
-    this.frameCount = 0;
-    this.fpsTimer = performance.now();
+    this.fps       = 0;
+    this.frameCount  = 0;
+    this.fpsTimer    = performance.now();
+    this.lastLatency = 0;
 
-    // Índices de marcos anatômicos do MediaPipe Face Mesh
-    this.LANDMARKS = {
-      // Olho Esquerdo (do observador / camera right)
-      LEFT_IRIS_CENTER: 473,
-      LEFT_IRIS_PERIMETER: [474, 475, 476, 477],
-      LEFT_EYE_CONTOUR: [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398],
-      LEFT_INNER_CORNER: 362,
-      LEFT_OUTER_CORNER: 263,
-      LEFT_UPPER_LID: 386,
-      LEFT_LOWER_LID: 374,
-      LEFT_EAR_POINTS: [362, 385, 387, 263, 373, 380],
+    // ── Marcos Anatômicos MediaPipe Face Mesh 478 ─────────────────
+    // Nota: "esquerdo/direito" = perspectiva do observador (não da câmera)
+    // Marco 468 = íris DIREITA da câmera (olho esquerdo do observador)
+    // Marco 473 = íris ESQUERDA da câmera (olho direito do observador)
+    this.LM = {
+      RIGHT_IRIS:   468,
+      RIGHT_IRIS_P: [469, 470, 471, 472],
+      RIGHT_EYE:    [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
+      RIGHT_INNER:  133,
+      RIGHT_OUTER:  33,
+      RIGHT_TOP:    159,
+      RIGHT_BOT:    145,
+      RIGHT_EAR:    [33, 160, 158, 133, 153, 144],
 
-      // Olho Direito (do observador / camera left)
-      RIGHT_IRIS_CENTER: 468,
-      RIGHT_IRIS_PERIMETER: [469, 470, 471, 472],
-      RIGHT_EYE_CONTOUR: [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246],
-      RIGHT_INNER_CORNER: 133,
-      RIGHT_OUTER_CORNER: 33,
-      RIGHT_UPPER_LID: 159,
-      RIGHT_LOWER_LID: 145,
-      RIGHT_EAR_POINTS: [33, 160, 158, 133, 153, 144],
+      LEFT_IRIS:    473,
+      LEFT_IRIS_P:  [474, 475, 476, 477],
+      LEFT_EYE:     [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398],
+      LEFT_INNER:   362,
+      LEFT_OUTER:   263,
+      LEFT_TOP:     386,
+      LEFT_BOT:     374,
+      LEFT_EAR:     [362, 385, 387, 263, 373, 380],
 
-      // Pontos para cálculo de Pose 3D da Cabeça
-      NOSE_TIP: 1,
-      CHIN: 152,
-      FOREHEAD: 10,
-      MOUTH_LEFT: 291,
-      MOUTH_RIGHT: 61
+      NOSE_TIP:    1,
+      CHIN:        152,
+      FOREHEAD:    10,
+      MOUTH_L:     291,
+      MOUTH_R:     61,
+      CHEEK_L:     234,
+      CHEEK_R:     454
     };
 
-    // Filtros de suavização adaptativa (Exponential Moving Average)
-    this.smoothLeftPupil = { x: 0.5, y: 0.5, z: 0 };
-    this.smoothRightPupil = { x: 0.5, y: 0.5, z: 0 };
-    this.smoothHeadPose = { pitch: 0, yaw: 0, roll: 0 };
-    this.alpha = 0.35; // Fator de suavização (responsividade vs estabilidade)
+    // ── Filtro EMA Duplo (suavização adaptativa) ──────────────────
+    // Alpha baixo = mais suave mas mais lento | Alto = mais responsivo mas trêmulo
+    this.alphaFast = 0.45; // Para movimentos grandes (sacadas)
+    this.alphaSlow = 0.15; // Para fixações e micromovimentos
 
-    // Detecção de piscada
-    this.earThreshold = 0.19;
-    this.blinkCount = 0;
-    this.isBlinking = false;
-    this.blinkStartTime = 0;
-    this.blinkTimes = [];
+    this._leftSmooth  = { x: 0.5, y: 0.5, z: 0, vx: 0, vy: 0 };
+    this._rightSmooth = { x: 0.5, y: 0.5, z: 0, vx: 0, vy: 0 };
+    this._headSmooth  = { pitch: 0, yaw: 0, roll: 0 };
+
+    // ── Detecção de Piscada (EAR threshold adaptativo) ────────────
+    this.earThreshold     = 0.21;
+    this.earBaseline      = 0.28; // calibrado continuamente
+    this.blinkCount       = 0;
+    this.isBlinking       = false;
+    this.blinkTimes       = [];
+    this._noFaceFrames    = 0;
+    this._maxNoFaceFrames = 8;  // Recovery após 8 frames sem rosto
+    this._lastValidData   = null;
   }
 
-  /**
-   * Inicializa a rede neural profunda Face Mesh do MediaPipe
-   */
+  // ─────────────────────────────────────────────────────────────────
   async initialize() {
-    this.notifyStatus('Carregando modelo de Deep Learning (FaceMesh + Iris)...');
+    this.notifyStatus('Carregando rede neural MediaPipe FaceMesh v2 (478 marcos)...');
     try {
       if (typeof window.FaceMesh === 'undefined') {
-        throw new Error('Biblioteca MediaPipe FaceMesh não encontrada no escopo global.');
+        throw new Error('MediaPipe FaceMesh não encontrado. Verifique sua conexão.');
       }
 
       this.faceMesh = new window.FaceMesh({
-        locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-        }
+        locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
       });
 
       this.faceMesh.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: true, // Crucial para os 478 marcos incluindo íris!
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        maxNumFaces:            1,
+        refineLandmarks:        true,   // Ativa 478 marcos (inclui íris)
+        minDetectionConfidence: 0.72,   // Mais alto = menos falsos positivos
+        minTrackingConfidence:  0.68,   // Mais alto = tracking mais estável
+        selfieMode:             false   // Não inverter internamente (fazemos via CSS)
       });
 
-      this.faceMesh.onResults((results) => this.processResults(results));
-      this.notifyStatus('Modelo de Deep Learning pronto.');
+      this.faceMesh.onResults((r) => this._processResults(r));
+      this.notifyStatus('Modelo de IA pronto. Iniciando câmera...');
       return true;
     } catch (err) {
-      console.error('[EyeTracker] Erro ao inicializar FaceMesh:', err);
+      console.error('[EyeTracker] Falha na inicialização:', err);
       if (this.onErrorCallback) this.onErrorCallback(err);
       throw err;
     }
   }
 
-  /**
-   * Inicia o fluxo de captura de vídeo da Webcam
-   */
+  // ─────────────────────────────────────────────────────────────────
   async startCamera(deviceId = null) {
-    if (!this.faceMesh) {
-      await this.initialize();
-    }
+    if (!this.faceMesh) await this.initialize();
 
-    this.notifyStatus('Solicitando permissão de câmera...');
+    this.notifyStatus('Abrindo câmera...');
     try {
-      const constraints = {
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width:      { ideal: 1280, min: 640 },
+          height:     { ideal: 720,  min: 480 },
+          frameRate:  { ideal: 60,   min: 30  },
           facingMode: 'user',
-          frameRate: { ideal: 60, min: 30 }
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {})
         }
-      };
+      });
 
-      if (deviceId) {
-        constraints.video.deviceId = { exact: deviceId };
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.videoElement.srcObject = stream;
       await this.videoElement.play();
 
       this.isRunning = true;
-      this.isCameraActive = true;
-      this.notifyStatus('Rastreamento ativo.');
-
-      // Utiliza requestVideoFrameCallback se disponível ou requestAnimationFrame
-      this.startProcessingLoop();
+      this.notifyStatus('⚡ Deep Learning ativo // 60 FPS');
+      this._runLoop();
       return true;
     } catch (err) {
-      console.error('[EyeTracker] Erro ao iniciar câmera:', err);
-      this.isCameraActive = false;
-      this.notifyStatus('Acesso à câmera não concedido ou indisponível.');
+      console.error('[EyeTracker] Câmera indisponível:', err);
+      this.notifyStatus('Câmera não disponível — usando simulação.');
       if (this.onErrorCallback) this.onErrorCallback(err);
       return false;
     }
   }
 
-  /**
-   * Para a captura e o processamento
-   */
   stop() {
     this.isRunning = false;
-    this.isCameraActive = false;
-    if (this.videoElement && this.videoElement.srcObject) {
-      const tracks = this.videoElement.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
+    if (this.videoElement?.srcObject) {
+      this.videoElement.srcObject.getTracks().forEach(t => t.stop());
       this.videoElement.srcObject = null;
     }
-    this.notifyStatus('Rastreamento pausado.');
+    this.notifyStatus('Rastreamento parado.');
   }
 
-  /**
-   * Loop de inferência contínua
-   */
-  startProcessingLoop() {
-    const processFrame = async () => {
+  // ─────────────────────────────────────────────────────────────────
+  _runLoop() {
+    const tick = async () => {
       if (!this.isRunning) return;
-
       if (this.videoElement.readyState >= 2) {
-        const startInfer = performance.now();
-        try {
-          await this.faceMesh.send({ image: this.videoElement });
-        } catch (e) {
-          console.warn('[EyeTracker] Erro no frame:', e);
-        }
-        const latency = performance.now() - startInfer;
-        this.updateFPS(latency);
+        const t0 = performance.now();
+        try { await this.faceMesh.send({ image: this.videoElement }); }
+        catch (e) { console.warn('[EyeTracker] frame skip:', e.message); }
+        this.lastLatency = Math.round(performance.now() - t0);
+        this._tickFPS();
       }
-
-      requestAnimationFrame(processFrame);
+      requestAnimationFrame(tick);
     };
-
-    requestAnimationFrame(processFrame);
+    requestAnimationFrame(tick);
   }
 
-  /**
-   * Processamento das inferências da rede neural
-   */
-  processResults(results) {
-    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      if (this.onResultsCallback) {
-        this.onResultsCallback({
-          detected: false,
-          fps: this.fps,
-          latency: this.lastLatency || 0
-        });
+  // ─────────────────────────────────────────────────────────────────
+  _processResults(results) {
+    if (!results.multiFaceLandmarks?.length) {
+      this._noFaceFrames++;
+
+      // Recovery: envia último dado válido por até N frames para evitar "flicker"
+      if (this._noFaceFrames <= this._maxNoFaceFrames && this._lastValidData) {
+        const d = this._lastValidData;
+        d.detected = true;
+        d.confidence = Math.max(0, 1 - this._noFaceFrames / this._maxNoFaceFrames);
+        d.fps = this.fps;
+        d.latency = this.lastLatency;
+        if (this.onResultsCallback) this.onResultsCallback(d);
+      } else {
+        if (this.onResultsCallback) this.onResultsCallback({ detected: false, fps: this.fps, latency: this.lastLatency });
       }
       return;
     }
 
-    const landmarks = results.multiFaceLandmarks[0];
+    this._noFaceFrames = 0;
+    const lm = results.multiFaceLandmarks[0];
 
-    // 1. Extração dos centros e perímetros das Íris (3D)
-    const rightIrisCenterRaw = landmarks[this.LANDMARKS.RIGHT_IRIS_CENTER];
-    const leftIrisCenterRaw = landmarks[this.LANDMARKS.LEFT_IRIS_CENTER];
+    // Verifica se os marcos de íris existem (refineLandmarks=true)
+    if (!lm[468] || !lm[473]) return;
 
-    if (!rightIrisCenterRaw || !leftIrisCenterRaw) {
-      return;
+    // ── Íris brutas ───────────────────────────────────────────────
+    const rIrisRaw = lm[this.LM.RIGHT_IRIS];
+    const lIrisRaw = lm[this.LM.LEFT_IRIS];
+
+    // ── Filtro EMA Adaptativo (velocidade determina alpha) ────────
+    const rVelX = Math.abs(rIrisRaw.x - this._rightSmooth.x);
+    const lVelX = Math.abs(lIrisRaw.x - this._leftSmooth.x);
+    const maxVel = Math.max(rVelX, lVelX);
+    // Alpha aumenta com a velocidade: sacada usa 0.45, fixação usa 0.15
+    const alpha = this.alphaSlow + (this.alphaFast - this.alphaSlow) * Math.min(1, maxVel * 20);
+
+    this._rightSmooth.x = this._rightSmooth.x * (1 - alpha) + rIrisRaw.x * alpha;
+    this._rightSmooth.y = this._rightSmooth.y * (1 - alpha) + rIrisRaw.y * alpha;
+    this._rightSmooth.z = this._rightSmooth.z * (1 - alpha) + (rIrisRaw.z || 0) * alpha;
+
+    this._leftSmooth.x = this._leftSmooth.x * (1 - alpha) + lIrisRaw.x * alpha;
+    this._leftSmooth.y = this._leftSmooth.y * (1 - alpha) + lIrisRaw.y * alpha;
+    this._leftSmooth.z = this._leftSmooth.z * (1 - alpha) + (lIrisRaw.z || 0) * alpha;
+
+    // ── Polígonos Anatômicos dos Olhos ────────────────────────────
+    const rightEyePoly = this.LM.RIGHT_EYE.map(i => lm[i]);
+    const leftEyePoly  = this.LM.LEFT_EYE.map(i => lm[i]);
+    const rightIrisPoly = this.LM.RIGHT_IRIS_P.map(i => lm[i]);
+    const leftIrisPoly  = this.LM.LEFT_IRIS_P.map(i => lm[i]);
+
+    // ── Gaze Ratio (posição relativa da íris no olho) ─────────────
+    const rightRatios = this._gazeRatio(this._rightSmooth, lm, this.LM.RIGHT_INNER, this.LM.RIGHT_OUTER, this.LM.RIGHT_TOP, this.LM.RIGHT_BOT);
+    const leftRatios  = this._gazeRatio(this._leftSmooth, lm, this.LM.LEFT_INNER, this.LM.LEFT_OUTER, this.LM.LEFT_TOP, this.LM.LEFT_BOT);
+
+    const combinedGazeRatio = {
+      x: (rightRatios.x + leftRatios.x) / 2,
+      y: (rightRatios.y + leftRatios.y) / 2
+    };
+
+    // ── EAR (Eye Aspect Ratio) — Detecção de Piscada ─────────────
+    const rightEAR = this._calcEAR(lm, this.LM.RIGHT_EAR);
+    const leftEAR  = this._calcEAR(lm, this.LM.LEFT_EAR);
+    const avgEAR   = (rightEAR + leftEAR) / 2;
+
+    // Calibração contínua da linha de base EAR (olho aberto médio)
+    if (avgEAR > 0.22) {
+      this.earBaseline = this.earBaseline * 0.998 + avgEAR * 0.002;
     }
-
-    // Suavização exponencial EMA
-    this.smoothLeftPupil = {
-      x: this.smoothLeftPupil.x * (1 - this.alpha) + leftIrisCenterRaw.x * this.alpha,
-      y: this.smoothLeftPupil.y * (1 - this.alpha) + leftIrisCenterRaw.y * this.alpha,
-      z: this.smoothLeftPupil.z * (1 - this.alpha) + leftIrisCenterRaw.z * this.alpha
-    };
-
-    this.smoothRightPupil = {
-      x: this.smoothRightPupil.x * (1 - this.alpha) + rightIrisCenterRaw.x * this.alpha,
-      y: this.smoothRightPupil.y * (1 - this.alpha) + rightIrisCenterRaw.y * this.alpha,
-      z: this.smoothRightPupil.z * (1 - this.alpha) + rightIrisCenterRaw.z * this.alpha
-    };
-
-    // 2. Extração dos Polígonos Anatômicos dos Olhos
-    const leftEyePolygon = this.LANDMARKS.LEFT_EYE_CONTOUR.map(idx => landmarks[idx]);
-    const rightEyePolygon = this.LANDMARKS.RIGHT_EYE_CONTOUR.map(idx => landmarks[idx]);
-    const leftIrisPolygon = this.LANDMARKS.LEFT_IRIS_PERIMETER.map(idx => landmarks[idx]);
-    const rightIrisPolygon = this.LANDMARKS.RIGHT_IRIS_PERIMETER.map(idx => landmarks[idx]);
-
-    // 3. Cálculo de Posição Relativa da Íris no Globo Ocular (Ratio Horizontal e Vertical)
-    const leftCorners = {
-      inner: landmarks[this.LANDMARKS.LEFT_INNER_CORNER],
-      outer: landmarks[this.LANDMARKS.LEFT_OUTER_CORNER],
-      top: landmarks[this.LANDMARKS.LEFT_UPPER_LID],
-      bottom: landmarks[this.LANDMARKS.LEFT_LOWER_LID]
-    };
-
-    const rightCorners = {
-      inner: landmarks[this.LANDMARKS.RIGHT_INNER_CORNER],
-      outer: landmarks[this.LANDMARKS.RIGHT_OUTER_CORNER],
-      top: landmarks[this.LANDMARKS.RIGHT_UPPER_LID],
-      bottom: landmarks[this.LANDMARKS.RIGHT_LOWER_LID]
-    };
-
-    const leftRatios = this.calculateGazeRatios(leftIrisCenterRaw, leftCorners);
-    const rightRatios = this.calculateGazeRatios(rightIrisCenterRaw, rightCorners);
-
-    // 4. Detecção de Piscada via Eye Aspect Ratio (EAR)
-    const leftEAR = this.calculateEAR(landmarks, this.LANDMARKS.LEFT_EAR_POINTS);
-    const rightEAR = this.calculateEAR(landmarks, this.LANDMARKS.RIGHT_EAR_POINTS);
-    const avgEAR = (leftEAR + rightEAR) / 2;
+    const dynThreshold = this.earBaseline * 0.72; // 72% da abertura normal
 
     const now = performance.now();
-    if (avgEAR < this.earThreshold) {
+    if (avgEAR < dynThreshold) {
       if (!this.isBlinking) {
         this.isBlinking = true;
-        this.blinkStartTime = now;
         this.blinkCount++;
         this.blinkTimes.push(now);
       }
     } else {
       this.isBlinking = false;
     }
-
-    // Limpa piscadas mais antigas que 60s para calcular taxa por minuto (BPM)
     this.blinkTimes = this.blinkTimes.filter(t => now - t < 60000);
-    const blinkRateBPM = this.blinkTimes.length;
 
-    // 5. Estimativa de Pose 3D da Cabeça (Pitch, Yaw, Roll)
-    const headPose = this.estimateHeadPose(landmarks);
-    this.smoothHeadPose = {
-      pitch: this.smoothHeadPose.pitch * (1 - this.alpha) + headPose.pitch * this.alpha,
-      yaw: this.smoothHeadPose.yaw * (1 - this.alpha) + headPose.yaw * this.alpha,
-      roll: this.smoothHeadPose.roll * (1 - this.alpha) + headPose.roll * this.alpha
-    };
+    // ── Pose da Cabeça (Euler angles aproximados) ─────────────────
+    const headPose = this._headPose(lm);
+    const hAlpha = 0.12;
+    this._headSmooth.pitch = this._headSmooth.pitch * (1 - hAlpha) + headPose.pitch * hAlpha;
+    this._headSmooth.yaw   = this._headSmooth.yaw   * (1 - hAlpha) + headPose.yaw   * hAlpha;
+    this._headSmooth.roll  = this._headSmooth.roll  * (1 - hAlpha) + headPose.roll  * hAlpha;
 
-    // 6. Estimativa de Distância Interpupilar (IPD) e Vetor de Visão 3D
-    const dx = (this.smoothLeftPupil.x - this.smoothRightPupil.x) * 1000;
-    const dy = (this.smoothLeftPupil.y - this.smoothRightPupil.y) * 1000;
-    const dz = (this.smoothLeftPupil.z - this.smoothRightPupil.z) * 1000;
-    const estimatedDistanceZ = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    // Estimativa da distância métrica da cabeça à câmera em cm (~50-80cm típico)
-    const metricDistanceCm = Math.max(30, Math.min(120, (63.0 / (Math.abs(this.smoothLeftPupil.x - this.smoothRightPupil.x) * 100)) * 60));
-
-    // Vetor de olhar combinado 3D
-    const combinedGazeRatioX = (leftRatios.x + rightRatios.x) / 2;
-    const combinedGazeRatioY = (leftRatios.y + rightRatios.y) / 2;
+    // ── Distância estimada (baseada em largura ocular pixel) ──────
+    const eyeW = Math.abs(lm[this.LM.RIGHT_OUTER].x - lm[this.LM.LEFT_OUTER].x);
+    const metricDistCm = eyeW > 0.01
+      ? Math.round(Math.max(30, Math.min(120, (0.23 / eyeW) * 60)))
+      : 60;
 
     const payload = {
-      detected: true,
-      timestamp: now,
-      fps: this.fps,
-      latency: this.lastLatency,
+      detected:    true,
+      timestamp:   now,
+      fps:         this.fps,
+      latency:     this.lastLatency,
+      confidence:  1.0,
+      isSimulated: false,
 
-      // Coordenadas 3D brutas e normalizadas
-      leftPupil: this.smoothLeftPupil,
-      rightPupil: this.smoothRightPupil,
-      leftIrisRaw: leftIrisCenterRaw,
-      rightIrisRaw: rightIrisCenterRaw,
+      // Coordenadas suavizadas das íris
+      rightPupil: { ...this._rightSmooth },
+      leftPupil:  { ...this._leftSmooth  },
 
-      // Polígonos 2D/3D dos contornos
+      // Polígonos anatômicos
       polygons: {
-        leftEye: leftEyePolygon,
-        rightEye: rightEyePolygon,
-        leftIris: leftIrisPolygon,
-        rightIris: rightIrisPolygon
+        rightEye:  rightEyePoly,
+        leftEye:   leftEyePoly,
+        rightIris: rightIrisPoly,
+        leftIris:  leftIrisPoly
       },
 
-      // Métricas anatômicas
-      leftRatios,
       rightRatios,
-      combinedGazeRatio: { x: combinedGazeRatioX, y: combinedGazeRatioY },
+      leftRatios,
+      combinedGazeRatio,
 
-      // Biometria
-      leftEAR,
       rightEAR,
+      leftEAR,
       avgEAR,
-      isBlinking: this.isBlinking,
-      blinkCount: this.blinkCount,
-      blinkRateBPM,
+      earBaseline:  this.earBaseline,
+      isBlinking:   this.isBlinking,
+      blinkCount:   this.blinkCount,
+      blinkRateBPM: this.blinkTimes.length,
 
-      // Pose da Cabeça
-      headPose: this.smoothHeadPose,
-
-      // Distâncias 3D
-      estimatedIPD_mm: 63.0, // Calibrado para média humana
-      metricDistanceCm: Math.round(metricDistanceCm),
-
-      // Todos os landmarks faciais
-      allLandmarks: landmarks
+      headPose:        this._headSmooth,
+      metricDistanceCm: metricDistCm,
+      allLandmarks:    lm
     };
 
-    if (this.onResultsCallback) {
-      this.onResultsCallback(payload);
-    }
+    this._lastValidData = { ...payload };
+    if (this.onResultsCallback) this.onResultsCallback(payload);
   }
 
-  /**
-   * Calcula proporção da pupila nos eixos horizontal e vertical
-   */
-  calculateGazeRatios(iris, corners) {
-    const eyeWidth = Math.abs(corners.outer.x - corners.inner.x) || 0.001;
-    const eyeHeight = Math.abs(corners.bottom.y - corners.top.y) || 0.001;
+  // ── Gaze Ratio: posição normalizada da íris no olho ──────────────
+  _gazeRatio(iris, lm, innerIdx, outerIdx, topIdx, botIdx) {
+    const inner = lm[innerIdx];
+    const outer = lm[outerIdx];
+    const top   = lm[topIdx];
+    const bot   = lm[botIdx];
 
-    // Normalização 0.0 (olhando para o canto interno/superior) a 1.0 (externo/inferior)
-    const minX = Math.min(corners.inner.x, corners.outer.x);
-    const minY = Math.min(corners.top.y, corners.bottom.y);
+    const eyeW = Math.abs(outer.x - inner.x) || 0.001;
+    const eyeH = Math.abs(bot.y  - top.y)    || 0.001;
 
-    const ratioX = (iris.x - minX) / eyeWidth;
-    const ratioY = (iris.y - minY) / eyeHeight;
+    const minX = Math.min(inner.x, outer.x);
+    const minY = Math.min(top.y, bot.y);
 
     return {
-      x: Math.max(0, Math.min(1, ratioX)),
-      y: Math.max(0, Math.min(1, ratioY))
+      x: Math.max(0, Math.min(1, (iris.x - minX) / eyeW)),
+      y: Math.max(0, Math.min(1, (iris.y - minY) / eyeH))
     };
   }
 
-  /**
-   * Calcula o Eye Aspect Ratio (EAR) para detecção de piscadas
-   */
-  calculateEAR(landmarks, points) {
-    const p1 = landmarks[points[0]];
-    const p2 = landmarks[points[1]];
-    const p3 = landmarks[points[2]];
-    const p4 = landmarks[points[3]];
-    const p5 = landmarks[points[4]];
-    const p6 = landmarks[points[5]];
-
-    const distV1 = Math.hypot(p2.x - p6.x, p2.y - p6.y);
-    const distV2 = Math.hypot(p3.x - p5.x, p3.y - p5.y);
-    const distH = Math.hypot(p1.x - p4.x, p1.y - p4.y);
-
-    if (distH === 0) return 0.25;
-    return (distV1 + distV2) / (2.0 * distH);
+  // ── Eye Aspect Ratio ──────────────────────────────────────────────
+  _calcEAR(lm, pts) {
+    const [p1, p2, p3, p4, p5, p6] = pts.map(i => lm[i]);
+    const v1 = Math.hypot(p2.x - p6.x, p2.y - p6.y);
+    const v2 = Math.hypot(p3.x - p5.x, p3.y - p5.y);
+    const h  = Math.hypot(p1.x - p4.x, p1.y - p4.y);
+    return h < 1e-6 ? 0.28 : (v1 + v2) / (2 * h);
   }
 
-  /**
-   * Estima os ângulos de Euler (Pitch, Yaw, Roll) da cabeça em graus
-   */
-  estimateHeadPose(landmarks) {
-    const nose = landmarks[this.LANDMARKS.NOSE_TIP];
-    const chin = landmarks[this.LANDMARKS.CHIN];
-    const leftMouth = landmarks[this.LANDMARKS.MOUTH_LEFT];
-    const rightMouth = landmarks[this.LANDMARKS.MOUTH_RIGHT];
-    const forehead = landmarks[this.LANDMARKS.FOREHEAD];
+  // ── Estimativa de Pose da Cabeça ──────────────────────────────────
+  _headPose(lm) {
+    const nose   = lm[this.LM.NOSE_TIP];
+    const chin   = lm[this.LM.CHIN];
+    const fore   = lm[this.LM.FOREHEAD];
+    const mouthL = lm[this.LM.MOUTH_L];
+    const mouthR = lm[this.LM.MOUTH_R];
+    const cheekL = lm[this.LM.CHEEK_L];
+    const cheekR = lm[this.LM.CHEEK_R];
 
-    // Yaw (rotação lateral da cabeça: esquerda/direita)
-    const mouthCenter = (leftMouth.x + rightMouth.x) / 2;
-    const yaw = (nose.x - mouthCenter) * 120;
+    const faceH = Math.abs(chin.y - fore.y) || 0.001;
+    const faceW = Math.abs(cheekL.x - cheekR.x) || 0.001;
 
-    // Pitch (elevação/inclinação para cima/baixo)
-    const faceHeight = Math.abs(chin.y - forehead.y) || 0.001;
-    const noseRelativeY = (nose.y - forehead.y) / faceHeight;
-    const pitch = (noseRelativeY - 0.58) * 100;
+    const mouthCX = (mouthL.x + mouthR.x) / 2;
+    const yaw   = Math.max(-50, Math.min(50, (nose.x - mouthCX) * 160));
+    const pitch = Math.max(-50, Math.min(50, ((nose.y - fore.y) / faceH - 0.55) * 110));
+    const roll  = Math.atan2(mouthL.y - mouthR.y, mouthL.x - mouthR.x) * (180 / Math.PI);
 
-    // Roll (inclinação lateral nos ombros)
-    const roll = Math.atan2(leftMouth.y - rightMouth.y, leftMouth.x - rightMouth.x) * (180 / Math.PI);
-
-    return {
-      pitch: Math.max(-45, Math.min(45, pitch)),
-      yaw: Math.max(-45, Math.min(45, yaw)),
-      roll: Math.max(-45, Math.min(45, roll))
-    };
+    return { pitch, yaw, roll };
   }
 
-  updateFPS(latency) {
-    this.lastLatency = Math.round(latency);
+  _tickFPS() {
     this.frameCount++;
     const now = performance.now();
     if (now - this.fpsTimer >= 1000) {
@@ -411,8 +352,6 @@ export class EyeTracker {
   }
 
   notifyStatus(msg) {
-    if (this.onStatusCallback) {
-      this.onStatusCallback(msg);
-    }
+    if (this.onStatusCallback) this.onStatusCallback(msg);
   }
 }

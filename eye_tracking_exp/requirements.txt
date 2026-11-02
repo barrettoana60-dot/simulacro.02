@@ -1,0 +1,19 @@
+# requirements.txt — eye_tracking_exp experimental layer
+#
+# Dependencies for the GazeFollower-based eye-tracking experiment scripts.
+# Tested with Python 3.9, 3.10, and 3.11.
+#
+# Install with:
+#   pip install -r requirements.txt
+
+# Core eye-tracking library
+gazefollower>=1.0.0
+
+# Display and event handling for stimulus presentation
+pygame>=2.0.0
+
+# Numerical operations (array maths, coordinate transforms, etc.)
+numpy>=1.21.0
+
+# Video capture and image processing (used internally by gazefollower)
+opencv-python>=4.5.0

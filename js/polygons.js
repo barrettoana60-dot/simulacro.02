@@ -1,432 +1,243 @@
 /**
- * OCULUS-AI // Biometric Polygons & Area of Interest (AOI) Engine
- * Renderiza polígonos anatômicos oculares, calcula envoltória convexa (Graham Scan)
- * da trajetória do olhar e gerencia Polígonos de Área de Interesse (AOIs) com métricas em tempo real.
+ * OCULUS-AI // Biometric Polygon & AOI Engine v2.0
+ * Polígonos anatômicos com coordenadas MediaPipe, Convex Hull, AOIs com Ray-Casting.
  */
 
 export class PolygonEngine {
   constructor(overlayCanvas) {
     this.canvas = overlayCanvas;
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx    = this.canvas.getContext('2d');
 
-    // Polígonos de Áreas de Interesse (AOIs) definidos pelo usuário
+    // AOIs pré-definidas (coords normalizadas 0-1)
     this.aois = [
-      {
-        id: 'aoi-1',
-        name: 'Zona A // Header & Título',
-        color: '#00f0ff',
-        points: [
-          { x: 0.15, y: 0.08 },
-          { x: 0.85, y: 0.08 },
-          { x: 0.85, y: 0.25 },
-          { x: 0.15, y: 0.25 }
-        ],
-        dwellTimeMs: 0,
-        fixationCount: 0,
-        firstFixationTime: null,
-        isCurrentlyLooking: false
-      },
-      {
-        id: 'aoi-2',
-        name: 'Zona B // Foco Central',
-        color: '#ff0077',
-        points: [
-          { x: 0.30, y: 0.35 },
-          { x: 0.70, y: 0.35 },
-          { x: 0.75, y: 0.70 },
-          { x: 0.25, y: 0.70 }
-        ],
-        dwellTimeMs: 0,
-        fixationCount: 0,
-        firstFixationTime: null,
-        isCurrentlyLooking: false
-      },
-      {
-        id: 'aoi-3',
-        name: 'Zona C // Ação & CTA',
-        color: '#00ff88',
-        points: [
-          { x: 0.35, y: 0.78 },
-          { x: 0.65, y: 0.78 },
-          { x: 0.65, y: 0.92 },
-          { x: 0.35, y: 0.92 }
-        ],
-        dwellTimeMs: 0,
-        fixationCount: 0,
-        firstFixationTime: null,
-        isCurrentlyLooking: false
-      }
+      { id: 'A', name: 'Zona A // Header',       color: '#00f5ff', points: [{x:0.12,y:0.06},{x:0.88,y:0.06},{x:0.88,y:0.24},{x:0.12,y:0.24}], dwellMs:0, fixes:0, ttff:null, looking:false },
+      { id: 'B', name: 'Zona B // Centro',        color: '#ff2d78', points: [{x:0.28,y:0.32},{x:0.72,y:0.32},{x:0.75,y:0.72},{x:0.25,y:0.72}], dwellMs:0, fixes:0, ttff:null, looking:false },
+      { id: 'C', name: 'Zona C // CTA / Ação',   color: '#00ff88', points: [{x:0.33,y:0.78},{x:0.67,y:0.78},{x:0.67,y:0.94},{x:0.33,y:0.94}], dwellMs:0, fixes:0, ttff:null, looking:false }
     ];
 
-    // Histórico de pontos para Envoltória Convexa (Convex Hull)
-    this.recentGazePoints = [];
-    this.maxRecentPoints = 120;
-    this.convexHull = [];
+    this.gazeHistory = [];
+    this.maxHistory  = 150;
+    this.convexHull  = [];
 
-    // Modo de desenho manual de polígonos
-    this.isDrawingMode = false;
-    this.currentDrawingPoints = [];
-
-    this.sessionStartTime = performance.now();
-    this.totalTrackingTimeMs = 0;
-    this.lastUpdateTime = performance.now();
+    this.totalMs = 0;
+    this.lastT   = performance.now();
   }
 
   resize() {
-    const parent = this.canvas.parentElement;
-    if (parent) {
-      this.canvas.width = parent.clientWidth;
-      this.canvas.height = parent.clientHeight;
-    }
+    const p = this.canvas.parentElement;
+    if (p) { this.canvas.width = p.clientWidth; this.canvas.height = p.clientHeight; }
   }
 
-  /**
-   * Atualiza as métricas dos polígonos com base nas coordenadas de olhar
-   */
-  update(gazeScreenX, gazeScreenY, isFixation = false) {
+  // ── Atualização por Frame ──────────────────────────────────────────
+  update(gx, gy) {
     const now = performance.now();
-    const dt = now - this.lastUpdateTime;
-    this.lastUpdateTime = now;
-    this.totalTrackingTimeMs += dt;
+    const dt  = now - this.lastT;
+    this.lastT = now;
+    this.totalMs += dt;
 
-    if (isNaN(gazeScreenX) || isNaN(gazeScreenY)) return;
+    if (isNaN(gx) || isNaN(gy)) return;
 
-    // Normaliza para o espaço deste canvas
-    const rect = this.canvas.getBoundingClientRect();
-    const normX = (gazeScreenX - rect.left) / this.canvas.width;
-    const normY = (gazeScreenY - rect.top) / this.canvas.height;
+    const r    = this.canvas.getBoundingClientRect();
+    const normX = (gx - r.left) / this.canvas.width;
+    const normY = (gy - r.top)  / this.canvas.height;
 
-    // 1. Armazena para cálculo do Polígono de Envoltória Convexa
+    // Histórico para Convex Hull
     if (normX >= 0 && normX <= 1 && normY >= 0 && normY <= 1) {
-      this.recentGazePoints.push({ x: normX, y: normY });
-      if (this.recentGazePoints.length > this.maxRecentPoints) {
-        this.recentGazePoints.shift();
-      }
-      this.convexHull = this.calculateConvexHull(this.recentGazePoints);
+      this.gazeHistory.push({ x: normX, y: normY });
+      if (this.gazeHistory.length > this.maxHistory) this.gazeHistory.shift();
+      this.convexHull = this._hull(this.gazeHistory);
     }
 
-    // 2. Interseção com Polígonos AOI (Ray Casting / Point-in-Polygon)
+    // AOI hit-test
     this.aois.forEach(aoi => {
-      const isInside = this.isPointInPolygon({ x: normX, y: normY }, aoi.points);
-
-      if (isInside) {
-        aoi.dwellTimeMs += dt;
-        if (!aoi.isCurrentlyLooking) {
-          aoi.isCurrentlyLooking = true;
-          aoi.fixationCount++;
-          if (aoi.firstFixationTime === null) {
-            aoi.firstFixationTime = Math.round(this.totalTrackingTimeMs);
-          }
-        }
+      const inside = this._pip({ x: normX, y: normY }, aoi.points);
+      if (inside) {
+        aoi.dwellMs += dt;
+        if (!aoi.looking) { aoi.looking = true; aoi.fixes++; aoi.ttff = aoi.ttff ?? Math.round(this.totalMs); }
       } else {
-        aoi.isCurrentlyLooking = false;
+        aoi.looking = false;
       }
     });
   }
 
-  /**
-   * Renderiza os contornos anatômicos dos olhos sobre a imagem de vídeo
-   */
-  renderEyeAnatomy(ctx, eyeData, videoWidth, videoHeight) {
-    if (!eyeData || !eyeData.detected || !eyeData.polygons) return;
-
-    const { leftEye, rightEye, leftIris, rightIris } = eyeData.polygons;
+  // ── Renderiza Polígonos Anatômicos dos Olhos ─────────────────────
+  // ctx já virá com transform de espelho aplicado pelo app.js
+  renderEyeAnatomy(ctx, eyeData, vw, vh) {
+    if (!eyeData?.detected || !eyeData.polygons) return;
+    const { rightEye, leftEye, rightIris, leftIris } = eyeData.polygons;
 
     ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
-    // 1. Polígono do Contorno do Olho Direito
-    this.drawPolygonOnCanvas(ctx, rightEye, videoWidth, videoHeight, {
-      strokeStyle: '#00f0ff',
-      fillStyle: 'rgba(0, 240, 255, 0.12)',
-      lineWidth: 2,
-      close: true
-    });
+    // Contorno dos olhos
+    this._drawPoly(ctx, rightEye, vw, vh, { stroke: '#00f5ff', fill: 'rgba(0,245,255,0.10)', lw: 2.0 });
+    this._drawPoly(ctx, leftEye,  vw, vh, { stroke: '#00f5ff', fill: 'rgba(0,245,255,0.10)', lw: 2.0 });
 
-    // 2. Polígono do Contorno do Olho Esquerdo
-    this.drawPolygonOnCanvas(ctx, leftEye, videoWidth, videoHeight, {
-      strokeStyle: '#00f0ff',
-      fillStyle: 'rgba(0, 240, 255, 0.12)',
-      lineWidth: 2,
-      close: true
-    });
+    // Íris
+    this._drawPoly(ctx, rightIris, vw, vh, { stroke: '#ff2d78', fill: 'rgba(255,45,120,0.25)', lw: 2.2 });
+    this._drawPoly(ctx, leftIris,  vw, vh, { stroke: '#ff2d78', fill: 'rgba(255,45,120,0.25)', lw: 2.2 });
 
-    // 3. Polígono da Íris Direita
-    this.drawPolygonOnCanvas(ctx, rightIris, videoWidth, videoHeight, {
-      strokeStyle: '#ff0077',
-      fillStyle: 'rgba(255, 0, 119, 0.25)',
-      lineWidth: 2,
-      close: true
-    });
-
-    // 4. Polígono da Íris Esquerda
-    this.drawPolygonOnCanvas(ctx, leftIris, videoWidth, videoHeight, {
-      strokeStyle: '#ff0077',
-      fillStyle: 'rgba(255, 0, 119, 0.25)',
-      lineWidth: 2,
-      close: true
-    });
-
-    // 5. Centro da Pupila com Retículo de Precisão
-    if (eyeData.rightPupil) {
-      const rx = eyeData.rightPupil.x * videoWidth;
-      const ry = eyeData.rightPupil.y * videoHeight;
-      this.drawCrosshair(ctx, rx, ry, '#ffffff', 6);
-    }
-
-    if (eyeData.leftPupil) {
-      const lx = eyeData.leftPupil.x * videoWidth;
-      const ly = eyeData.leftPupil.y * videoHeight;
-      this.drawCrosshair(ctx, lx, ly, '#ffffff', 6);
-    }
+    // Centro das pupilas — retículo de precisão
+    if (eyeData.rightPupil) this._reticle(ctx, eyeData.rightPupil.x * vw, eyeData.rightPupil.y * vh, '#ffffff', 8);
+    if (eyeData.leftPupil)  this._reticle(ctx, eyeData.leftPupil.x  * vw, eyeData.leftPupil.y  * vh, '#ffffff', 8);
 
     ctx.restore();
   }
 
-  drawPolygonOnCanvas(ctx, points, w, h, style) {
-    if (!points || points.length < 3) return;
-
+  _drawPoly(ctx, pts, w, h, s) {
+    if (!pts || pts.length < 3) return;
     ctx.beginPath();
-    ctx.moveTo(points[0].x * w, points[0].y * h);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x * w, points[i].y * h);
-    }
-    if (style.close) ctx.closePath();
-
-    if (style.fillStyle) {
-      ctx.fillStyle = style.fillStyle;
-      ctx.fill();
-    }
-    if (style.strokeStyle) {
-      ctx.strokeStyle = style.strokeStyle;
-      ctx.lineWidth = style.lineWidth || 1.5;
-      ctx.stroke();
-    }
+    ctx.moveTo(pts[0].x * w, pts[0].y * h);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * w, pts[i].y * h);
+    ctx.closePath();
+    if (s.fill)   { ctx.fillStyle = s.fill;   ctx.fill(); }
+    if (s.stroke) { ctx.strokeStyle = s.stroke; ctx.lineWidth = s.lw || 1.5; ctx.stroke(); }
   }
 
-  drawCrosshair(ctx, x, y, color, size) {
+  _reticle(ctx, x, y, color, r) {
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth   = 1.8;
     ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
-    ctx.moveTo(x - size * 1.5, y);
-    ctx.lineTo(x + size * 1.5, y);
-    ctx.moveTo(x, y - size * 1.5);
-    ctx.lineTo(x, y + size * 1.5);
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.moveTo(x - r * 1.7, y); ctx.lineTo(x + r * 1.7, y);
+    ctx.moveTo(x, y - r * 1.7); ctx.lineTo(x, y + r * 1.7);
     ctx.stroke();
   }
 
-  /**
-   * Renderiza os Polígonos de Área de Interesse e Envoltória Convexa
-   */
+  // ── Renderiza AOIs e Convex Hull ──────────────────────────────────
   renderAOIOverlay() {
     const w = this.canvas.width;
     const h = this.canvas.height;
     this.ctx.clearRect(0, 0, w, h);
 
-    // 1. Polígono de Envoltória Convexa do Campo de Visão
+    // Convex hull (campo de exploração visual)
     if (this.convexHull.length >= 3) {
       this.ctx.save();
       this.ctx.beginPath();
       this.ctx.moveTo(this.convexHull[0].x * w, this.convexHull[0].y * h);
-      for (let i = 1; i < this.convexHull.length; i++) {
-        this.ctx.lineTo(this.convexHull[i].x * w, this.convexHull[i].y * h);
-      }
+      this.convexHull.slice(1).forEach(p => this.ctx.lineTo(p.x * w, p.y * h));
       this.ctx.closePath();
-      this.ctx.fillStyle = 'rgba(0, 240, 255, 0.06)';
+      this.ctx.fillStyle = 'rgba(0,245,255,0.05)';
       this.ctx.fill();
-      this.ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+      this.ctx.strokeStyle = 'rgba(0,245,255,0.45)';
       this.ctx.lineWidth = 1.5;
       this.ctx.setLineDash([5, 5]);
       this.ctx.stroke();
+      this.ctx.setLineDash([]);
       this.ctx.restore();
     }
 
-    // 2. Polígonos AOI (Áreas de Interesse)
+    // AOIs
     this.aois.forEach(aoi => {
       if (aoi.points.length < 3) return;
-
       this.ctx.save();
+
       this.ctx.beginPath();
       this.ctx.moveTo(aoi.points[0].x * w, aoi.points[0].y * h);
-      for (let i = 1; i < aoi.points.length; i++) {
-        this.ctx.lineTo(aoi.points[i].x * w, aoi.points[i].y * h);
-      }
+      aoi.points.slice(1).forEach(p => this.ctx.lineTo(p.x * w, p.y * h));
       this.ctx.closePath();
 
-      // Preenchimento e brilho se o usuário estiver olhando no polígono
-      if (aoi.isCurrentlyLooking) {
-        this.ctx.fillStyle = this.hexToRgba(aoi.color, 0.28);
-        this.ctx.strokeStyle = aoi.color;
-        this.ctx.lineWidth = 3.5;
-        this.ctx.shadowColor = aoi.color;
-        this.ctx.shadowBlur = 12;
-      } else {
-        this.ctx.fillStyle = this.hexToRgba(aoi.color, 0.08);
-        this.ctx.strokeStyle = this.hexToRgba(aoi.color, 0.7);
-        this.ctx.lineWidth = 2;
-        this.ctx.shadowBlur = 0;
-      }
-
+      this.ctx.fillStyle   = aoi.looking ? this._rgba(aoi.color, 0.22) : this._rgba(aoi.color, 0.07);
+      this.ctx.strokeStyle = aoi.looking ? aoi.color : this._rgba(aoi.color, 0.6);
+      this.ctx.lineWidth   = aoi.looking ? 3.5 : 2.0;
+      this.ctx.shadowColor = aoi.looking ? aoi.color : 'transparent';
+      this.ctx.shadowBlur  = aoi.looking ? 14 : 0;
       this.ctx.fill();
       this.ctx.stroke();
 
-      // Rótulo da Zona com Estatísticas
-      const center = this.getPolygonCenter(aoi.points);
-      const cx = center.x * w;
-      const cy = center.y * h;
+      // Label
+      const c = this._center(aoi.points);
+      const cx = c.x * w, cy = c.y * h;
+      const dw   = (aoi.dwellMs / 1000).toFixed(1);
+      const pct  = this.totalMs > 0 ? Math.round(aoi.dwellMs / this.totalMs * 100) : 0;
 
-      const dwellSec = (aoi.dwellTimeMs / 1000).toFixed(1);
-      const attentionPct = this.totalTrackingTimeMs > 0
-        ? ((aoi.dwellTimeMs / this.totalTrackingTimeMs) * 100).toFixed(0)
-        : 0;
-
-      // Badge de texto
       this.ctx.shadowBlur = 0;
-      this.ctx.fillStyle = 'rgba(5, 10, 20, 0.85)';
+      this.ctx.fillStyle  = 'rgba(4,8,18,0.88)';
       this.ctx.strokeStyle = aoi.color;
-      this.ctx.lineWidth = 1;
+      this.ctx.lineWidth   = 1;
       this.ctx.beginPath();
-      this.ctx.roundRect(cx - 75, cy - 18, 150, 36, 6);
+      this.ctx.roundRect(cx - 76, cy - 20, 152, 40, 8);
       this.ctx.fill();
       this.ctx.stroke();
 
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.font = 'bold 11px Inter, sans-serif';
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText(aoi.name, cx, cy - 3);
-
+      this.ctx.fillStyle  = '#fff';
+      this.ctx.font       = 'bold 11px Inter, sans-serif';
+      this.ctx.textAlign  = 'center';
+      this.ctx.fillText(aoi.name, cx, cy - 4);
       this.ctx.fillStyle = aoi.color;
-      this.ctx.font = '10px JetBrains Mono, monospace';
-      this.ctx.fillText(`Tempo: ${dwellSec}s (${attentionPct}%)`, cx, cy + 11);
-
+      this.ctx.font      = '10px JetBrains Mono, monospace';
+      this.ctx.fillText(`${dw}s (${pct}%) • ${aoi.fixes} fix`, cx, cy + 12);
       this.ctx.restore();
     });
-
-    // 3. Polígono em Desenho Ativo
-    if (this.currentDrawingPoints.length > 0) {
-      this.ctx.save();
-      this.ctx.strokeStyle = '#ffff00';
-      this.ctx.lineWidth = 2;
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.currentDrawingPoints[0].x * w, this.currentDrawingPoints[0].y * h);
-      for (let i = 1; i < this.currentDrawingPoints.length; i++) {
-        this.ctx.lineTo(this.currentDrawingPoints[i].x * w, this.currentDrawingPoints[i].y * h);
-      }
-      this.ctx.stroke();
-
-      // Vértices
-      this.currentDrawingPoints.forEach(p => {
-        this.ctx.fillStyle = '#ffff00';
-        this.ctx.beginPath();
-        this.ctx.arc(p.x * w, p.y * h, 5, 0, Math.PI * 2);
-        this.ctx.fill();
-      });
-      this.ctx.restore();
-    }
-  }
-
-  /**
-   * Algoritmo Ray-Casting (Jordan Curve Theorem)
-   * Determina se um ponto está dentro de um polígono qualquer
-   */
-  isPointInPolygon(point, vs) {
-    const x = point.x, y = point.y;
-    let inside = false;
-    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-      const xi = vs[i].x, yi = vs[i].y;
-      const xj = vs[j].x, yj = vs[j].y;
-
-      const intersect = ((yi > y) !== (yj > y)) &&
-        (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  /**
-   * Algoritmo de Graham Scan para Envoltória Convexa (Convex Hull)
-   */
-  calculateConvexHull(points) {
-    if (points.length < 3) return [...points];
-
-    // Clona e encontra ponto mais baixo (menor y, depois menor x)
-    const pts = points.map(p => ({ x: p.x, y: p.y }));
-    let startIdx = 0;
-    for (let i = 1; i < pts.length; i++) {
-      if (pts[i].y < pts[startIdx].y || (pts[i].y === pts[startIdx].y && pts[i].x < pts[startIdx].x)) {
-        startIdx = i;
-      }
-    }
-    const startPoint = pts.splice(startIdx, 1)[0];
-
-    // Ordena pelo ângulo polar em relação a startPoint
-    pts.sort((a, b) => {
-      const angleA = Math.atan2(a.y - startPoint.y, a.x - startPoint.x);
-      const angleB = Math.atan2(b.y - startPoint.y, b.x - startPoint.x);
-      return angleA - angleB;
-    });
-
-    const stack = [startPoint, pts[0], pts[1]];
-    for (let i = 2; i < pts.length; i++) {
-      let top = stack.length - 1;
-      while (stack.length >= 2 && this.ccw(stack[top - 1], stack[top], pts[i]) <= 0) {
-        stack.pop();
-        top = stack.length - 1;
-      }
-      stack.push(pts[i]);
-    }
-    return stack;
-  }
-
-  ccw(p1, p2, p3) {
-    return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
-  }
-
-  getPolygonCenter(points) {
-    let sumX = 0, sumY = 0;
-    points.forEach(p => {
-      sumX += p.x;
-      sumY += p.y;
-    });
-    return {
-      x: sumX / points.length,
-      y: sumY / points.length
-    };
-  }
-
-  hexToRgba(hex, alpha) {
-    const c = hex.replace('#', '');
-    const r = parseInt(c.substring(0, 2), 16) || 0;
-    const g = parseInt(c.substring(2, 4), 16) || 0;
-    const b = parseInt(c.substring(4, 6), 16) || 0;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 
   getAOIStats() {
-    return this.aois.map(aoi => ({
-      id: aoi.id,
-      name: aoi.name,
-      color: aoi.color,
-      dwellTimeSec: (aoi.dwellTimeMs / 1000).toFixed(2),
-      attentionPct: this.totalTrackingTimeMs > 0
-        ? Number(((aoi.dwellTimeMs / this.totalTrackingTimeMs) * 100).toFixed(1))
-        : 0,
-      fixationCount: aoi.fixationCount,
-      ttffMs: aoi.firstFixationTime !== null ? aoi.firstFixationTime : 'N/A'
+    return this.aois.map(a => ({
+      id: a.id, name: a.name, color: a.color,
+      dwellTimeSec: (a.dwellMs / 1000).toFixed(2),
+      attentionPct: this.totalMs > 0 ? Number(((a.dwellMs / this.totalMs) * 100).toFixed(1)) : 0,
+      fixationCount: a.fixes,
+      ttffMs: a.ttff ?? 'N/A'
     }));
   }
 
   reset() {
-    this.sessionStartTime = performance.now();
-    this.totalTrackingTimeMs = 0;
-    this.lastUpdateTime = performance.now();
-    this.recentGazePoints = [];
-    this.convexHull = [];
-    this.aois.forEach(aoi => {
-      aoi.dwellTimeMs = 0;
-      aoi.fixationCount = 0;
-      aoi.firstFixationTime = null;
-      aoi.isCurrentlyLooking = false;
+    this.gazeHistory = []; this.convexHull = [];
+    this.totalMs = 0;      this.lastT = performance.now();
+    this.aois.forEach(a => { a.dwellMs = 0; a.fixes = 0; a.ttff = null; a.looking = false; });
+  }
+
+  // ── Algoritmos ────────────────────────────────────────────────────
+
+  _pip(pt, vs) {
+    // Ray-Casting (Jordan Curve Theorem)
+    let inside = false;
+    const { x, y } = pt;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+      const { x: xi, y: yi } = vs[i];
+      const { x: xj, y: yj } = vs[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi)
+        inside = !inside;
+    }
+    return inside;
+  }
+
+  _hull(pts) {
+    // Graham Scan O(N log N)
+    if (pts.length < 3) return [...pts];
+    const sorted = [...pts];
+    let lo = 0;
+    sorted.forEach((p, i) => { if (p.y < sorted[lo].y || (p.y === sorted[lo].y && p.x < sorted[lo].x)) lo = i; });
+    const start = sorted.splice(lo, 1)[0];
+    sorted.sort((a, b) => {
+      const A = Math.atan2(a.y - start.y, a.x - start.x);
+      const B = Math.atan2(b.y - start.y, b.x - start.x);
+      return A - B;
     });
+    const stack = [start, sorted[0], sorted[1]];
+    for (let i = 2; i < sorted.length; i++) {
+      while (stack.length >= 2) {
+        const [p1, p2] = [stack[stack.length-2], stack[stack.length-1]];
+        if ((p2.x-p1.x)*(sorted[i].y-p1.y) - (p2.y-p1.y)*(sorted[i].x-p1.x) <= 0) stack.pop();
+        else break;
+      }
+      stack.push(sorted[i]);
+    }
+    return stack;
+  }
+
+  _center(pts) {
+    const sx = pts.reduce((s, p) => s + p.x, 0);
+    const sy = pts.reduce((s, p) => s + p.y, 0);
+    return { x: sx / pts.length, y: sy / pts.length };
+  }
+
+  _rgba(hex, a) {
+    const c = hex.replace('#', '');
+    const r = parseInt(c.slice(0,2), 16);
+    const g = parseInt(c.slice(2,4), 16);
+    const b = parseInt(c.slice(4,6), 16);
+    return `rgba(${r},${g},${b},${a})`;
   }
 }

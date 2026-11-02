@@ -1,0 +1,8 @@
+# Vercel Ignore file
+# Prevents Vercel from mistaking local Python experimental modules for Python Serverless Functions
+
+eye_tracking_exp/
+*.py
+requirements*.txt
+__pycache__/
+.pytest_cache/
